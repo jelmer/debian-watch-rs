@@ -1,0 +1,9 @@
+[package]
+name = "debian-watch"
+version = "0.1.0"
+authors = ["Jelmer Vernooij <jelmer@jelmer.uk>"]
+edition = "2021"
+license = "Apache-2.0"
+description = "parser for Debian watch files"
+repository = "https://github.com/jelmer/debian-watch-rs.git"
+homepage = "https://github.com/jelmer/debian-watch-rs"

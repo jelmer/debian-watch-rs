@@ -7,3 +7,10 @@ license = "Apache-2.0"
 description = "parser for Debian watch files"
 repository = "https://github.com/jelmer/debian-watch-rs.git"
 homepage = "https://github.com/jelmer/debian-watch-rs"
+
+[dependencies]
+nom = "7.1"
+rowan = "0.9"
+num-derive = "0.3"
+num-traits = "0.2"
+smol_str = "0.1"

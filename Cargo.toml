@@ -10,7 +10,8 @@ homepage = "https://github.com/jelmer/debian-watch-rs"
 
 [dependencies]
 nom = "7.1"
-rowan = "0.9"
-num-derive = "0.3"
+rowan = "0.15.11"
+num-derive = "0.4"
 num-traits = "0.2"
-smol_str = "0.1"
+smol_str = "0.2"
+m_lexer = "0.0.4"

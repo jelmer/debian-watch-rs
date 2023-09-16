@@ -59,7 +59,12 @@ mod tests {
     #[test]
     fn test_simple() {
         assert_eq!(
-            super::lex(crate::WATCHV1),
+            super::lex(
+                r#"version=4
+opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
+  https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
+"#
+            ),
             vec![
                 (KEY, "version".into()),
                 (EQUALS, "=".into()),

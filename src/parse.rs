@@ -2,6 +2,21 @@ use crate::lex::lex;
 use crate::SyntaxKind;
 use crate::SyntaxKind::*;
 use crate::DEFAULT_VERSION;
+use std::str::FromStr;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParseError(Vec<String>);
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        for err in &self.0 {
+            writeln!(f, "{}", err)?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for ParseError {}
 
 /// Second, implementing the `Language` trait teaches rowan to convert between
 /// these two SyntaxKind types, allowing for a nicer SyntaxNode API where
@@ -64,7 +79,8 @@ fn parse(text: &str) -> Parse {
                 }
                 if self.current() != Some(VALUE) {
                     self.builder.start_node(ERROR.into());
-                    self.errors.push("expected value".to_string());
+                    self.errors
+                        .push(format!("expected value, got {:?}", self.current()));
                     self.bump();
                     self.builder.finish_node();
                 } else {
@@ -116,9 +132,13 @@ fn parse(text: &str) -> Parse {
                     self.skip_ws();
                     continue;
                 }
-                if self.current() != Some(VALUE) {
+                if self.current() != Some(VALUE) && self.current() != Some(KEY) {
                     self.builder.start_node(ERROR.into());
-                    self.errors.push("expected value".to_string());
+                    self.errors.push(format!(
+                        "expected value, got {:?} (i={})",
+                        self.current(),
+                        i
+                    ));
                     self.bump();
                     self.builder.finish_node();
                 } else {
@@ -163,9 +183,10 @@ fn parse(text: &str) -> Parse {
             } else {
                 self.bump();
             }
-            if self.current() != Some(VALUE) {
+            if self.current() != Some(VALUE) && self.current() != Some(KEY) {
                 self.builder.start_node(ERROR.into());
-                self.errors.push("expected value".to_string());
+                self.errors
+                    .push(format!("expected value, got {:?}", self.current()));
                 self.bump();
                 self.builder.finish_node();
             } else {
@@ -270,8 +291,8 @@ impl Parse {
         SyntaxNode::new_root(self.green_node.clone())
     }
 
-    fn root(&self) -> Root {
-        Root::cast(self.syntax()).unwrap()
+    fn root(&self) -> WatchFile {
+        WatchFile::cast(self.syntax()).unwrap()
     }
 }
 
@@ -279,7 +300,7 @@ macro_rules! ast_node {
     ($ast:ident, $kind:ident) => {
         #[derive(PartialEq, Eq, Hash)]
         #[repr(transparent)]
-        struct $ast(SyntaxNode);
+        pub struct $ast(SyntaxNode);
         impl $ast {
             #[allow(unused)]
             fn cast(node: SyntaxNode) -> Option<Self> {
@@ -290,16 +311,38 @@ macro_rules! ast_node {
                 }
             }
         }
+
+        impl ToString for $ast {
+            fn to_string(&self) -> String {
+                self.0.text().to_string()
+            }
+        }
     };
 }
 
-ast_node!(Root, ROOT);
+ast_node!(WatchFile, ROOT);
 ast_node!(Version, VERSION);
 ast_node!(Entry, ENTRY);
 ast_node!(OptionList, OPTS_LIST);
 ast_node!(_Option, OPTION);
 
-impl Root {
+impl WatchFile {
+    pub fn new(version: Option<u32>) -> WatchFile {
+        let mut builder = GreenNodeBuilder::new();
+
+        builder.start_node(ROOT.into());
+        if let Some(version) = version {
+            builder.start_node(VERSION.into());
+            builder.token(KEY.into(), "version");
+            builder.token(EQUALS.into(), "=");
+            builder.token(VALUE.into(), version.to_string().as_str());
+            builder.token(NEWLINE.into(), "\n");
+            builder.finish_node();
+        }
+        builder.finish_node();
+        WatchFile(SyntaxNode::new_root(builder.finish()))
+    }
+
     /// Returns the version of the watch file.
     pub fn version(&self) -> u32 {
         self.0
@@ -312,6 +355,19 @@ impl Root {
     /// Returns an iterator over all entries in the watch file.
     pub fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
         self.0.children().filter_map(Entry::cast)
+    }
+}
+
+impl FromStr for WatchFile {
+    type Err = ParseError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let parsed = parse(s);
+        if parsed.errors.is_empty() {
+            Ok(parsed.root())
+        } else {
+            Err(ParseError(parsed.errors))
+        }
     }
 }
 
@@ -335,14 +391,31 @@ impl Version {
 }
 
 impl Entry {
-    pub fn options(&self) -> Option<OptionList> {
+    pub fn option_list(&self) -> Option<OptionList> {
         self.0.children().find_map(OptionList::cast)
+    }
+
+    /// Returns options set
+    pub fn opts(&self) -> std::collections::HashMap<String, String> {
+        let mut options = std::collections::HashMap::new();
+
+        if let Some(ol) = self.option_list() {
+            for opt in ol.children() {
+                let key = opt.key();
+                let value = opt.value();
+                if let (Some(key), Some(value)) = (key, value) {
+                    options.insert(key.to_string(), value.to_string());
+                }
+            }
+        }
+
+        options
     }
 
     fn items(&self) -> impl Iterator<Item = String> + '_ {
         self.0.children_with_tokens().filter_map(|it| match it {
             SyntaxElement::Token(token) => {
-                if token.kind() == VALUE {
+                if token.kind() == VALUE || token.kind() == KEY {
                     Some(token.text().to_string())
                 } else {
                     None
@@ -372,7 +445,7 @@ impl Entry {
 }
 
 impl OptionList {
-    pub fn options(&self) -> impl Iterator<Item = _Option> + '_ {
+    fn children(&self) -> impl Iterator<Item = _Option> + '_ {
         self.0.children().filter_map(_Option::cast)
     }
 }
@@ -394,22 +467,29 @@ impl _Option {
 
     /// Returns the value of the option.
     pub fn value(&self) -> Option<String> {
-        self.0.children_with_tokens().find_map(|it| match it {
-            SyntaxElement::Token(token) => {
-                if token.kind() == VALUE {
-                    Some(token.text().to_string())
-                } else {
-                    None
+        self.0
+            .children_with_tokens()
+            .filter_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    if token.kind() == VALUE || token.kind() == KEY {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
                 }
-            }
-            _ => None,
-        })
+                _ => None,
+            })
+            .nth(1)
     }
 }
 
 #[test]
 fn test_parse_v1() {
-    let parsed = parse(crate::WATCHV1);
+    const WATCHV1: &str = r#"version=4
+opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
+  https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
+"#;
+    let parsed = parse(WATCHV1);
     assert_eq!(parsed.errors, Vec::<String>::new());
     let node = parsed.syntax();
     assert_eq!(
@@ -454,15 +534,19 @@ fn test_parse_v1() {
     assert_eq!(entry.version(), None);
     assert_eq!(entry.script(), None);
 
-    assert_eq!(node.text(), crate::WATCHV1);
+    assert_eq!(node.text(), WATCHV1);
 }
 
 #[test]
 fn test_parse_v2() {
-    let parsed = parse(crate::WATCHV2);
+    let parsed = parse(
+        r#"version=4
+https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
+# comment
+"#,
+    );
     assert_eq!(parsed.errors, Vec::<String>::new());
     let node = parsed.syntax();
-    println!("{:#?}", node);
     assert_eq!(
         format!("{:#?}", node),
         r###"ROOT@0..90

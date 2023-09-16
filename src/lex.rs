@@ -2,9 +2,9 @@ use crate::SyntaxKind;
 use crate::SyntaxKind::*;
 
 /// Split the input string into a flat list of tokens
-fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
+pub(crate) fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
     fn tok(t: SyntaxKind) -> m_lexer::TokenKind {
-        let sk = rowan::SyntaxKind(t as u16);
+        let sk = rowan::SyntaxKind::from(t);
         m_lexer::TokenKind(sk.0)
     }
     fn kind(t: m_lexer::TokenKind) -> SyntaxKind {
@@ -12,10 +12,12 @@ fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
             0 => KEY,
             1 => VALUE,
             2 => EQUALS,
-            3 => CONTINUATION,
-            4 => NEWLINE,
-            5 => WHITESPACE,
-            6 => ERROR,
+            3 => COMMA,
+            4 => CONTINUATION,
+            5 => NEWLINE,
+            6 => WHITESPACE,
+            7 => COMMENT,
+            8 => ERROR,
             _ => unreachable!(),
         }
     }
@@ -24,11 +26,13 @@ fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
         .error_token(tok(ERROR))
         .tokens(&[
             (tok(KEY), r"[a-z]+"),
-            (tok(VALUE), r"[^\s=]*[^\s=\\]"),
+            (tok(VALUE), r"[^\s=,]*[^\s=\\,]"),
             (tok(CONTINUATION), r"\\\n"),
             (tok(EQUALS), r"="),
+            (tok(COMMA), r","),
             (tok(NEWLINE), r"\n"),
             (tok(WHITESPACE), r"\s+"),
+            (tok(COMMENT), r"#[^\n]*"),
         ])
         .build();
 
@@ -47,11 +51,6 @@ fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
 #[cfg(test)]
 mod tests {
     use crate::SyntaxKind::*;
-    pub static WATCHV1: &str = r#"version=4
-opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
-  https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
-"#;
-
     #[test]
     fn test_empty() {
         assert_eq!(super::lex(""), vec![]);
@@ -60,7 +59,7 @@ opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
     #[test]
     fn test_simple() {
         assert_eq!(
-            super::lex(WATCHV1),
+            super::lex(crate::WATCHV1),
             vec![
                 (KEY, "version".into()),
                 (EQUALS, "=".into()),

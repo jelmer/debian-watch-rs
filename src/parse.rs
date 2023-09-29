@@ -437,8 +437,8 @@ impl Entry {
     }
 
     /// Returns the version policy
-    pub fn version(&self) -> Option<String> {
-        self.items().nth(2)
+    pub fn version(&self) -> Option<crate::VersionPolicy> {
+        self.items().nth(2).and_then(|it| it.parse().ok())
     }
 
     /// Returns the script of the entry.

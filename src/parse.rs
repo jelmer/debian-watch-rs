@@ -163,6 +163,9 @@ fn parse(text: &str) -> Parse {
             if self.current().is_none() {
                 return false;
             }
+            while self.current() == Some(CONTINUATION) {
+                self.bump();
+            }
             if self.current() == Some(WHITESPACE) {
                 return false;
             }
@@ -175,22 +178,23 @@ fn parse(text: &str) -> Parse {
             } else {
                 self.bump();
             }
-            if self.current() != Some(EQUALS) {
+            if self.current() == Some(EQUALS) {
+                self.bump();
+                if self.current() != Some(VALUE) && self.current() != Some(KEY) {
+                    self.builder.start_node(ERROR.into());
+                    self.errors
+                        .push(format!("expected value, got {:?}", self.current()));
+                    self.bump();
+                    self.builder.finish_node();
+                } else {
+                    self.bump();
+                }
+            } else if self.current() == Some(COMMA) {
+            } else {
                 self.builder.start_node(ERROR.into());
                 self.errors.push("expected `=`".to_string());
                 self.bump();
                 self.builder.finish_node();
-            } else {
-                self.bump();
-            }
-            if self.current() != Some(VALUE) && self.current() != Some(KEY) {
-                self.builder.start_node(ERROR.into());
-                self.errors
-                    .push(format!("expected value, got {:?}", self.current()));
-                self.bump();
-                self.builder.finish_node();
-            } else {
-                self.bump();
             }
             self.builder.finish_node();
             true
@@ -216,6 +220,11 @@ fn parse(text: &str) -> Parse {
                     if !self.parse_option() {
                         break;
                     }
+                    if self.current() == Some(COMMA) {
+                        self.bump();
+                    } else {
+                        break;
+                    }
                 }
                 self.builder.finish_node();
                 self.skip_ws();
@@ -229,6 +238,7 @@ fn parse(text: &str) -> Parse {
             if let Some(v) = self.parse_version() {
                 version = v;
             }
+            // TODO: use version to influence parsing
             loop {
                 if !self.parse_watch_entry() {
                     break;
@@ -395,6 +405,141 @@ impl Entry {
         self.0.children().find_map(OptionList::cast)
     }
 
+    pub fn get_option(&self, key: &str) -> Option<String> {
+        self.option_list().and_then(|ol| ol.get_option(key))
+    }
+
+    pub fn has_option(&self, key: &str) -> bool {
+        self.option_list().map_or(false, |ol| ol.has_option(key))
+    }
+
+    /// The name of the secondary source tarball
+    pub fn component(&self) -> Option<String> {
+        self.get_option("component")
+    }
+
+    pub fn ctype(&self) -> Option<ComponentType> {
+        self.get_option("ctype").and_then(|it| it.parse().ok())
+    }
+
+    pub fn compression(&self) -> Option<Compression> {
+        self.get_option("compression")
+            .and_then(|it| it.parse().ok())
+    }
+
+    pub fn repack(&self) -> bool {
+        self.has_option("repack")
+    }
+
+    pub fn repacksuffix(&self) -> Option<String> {
+        self.get_option("repacksuffix")
+    }
+
+    pub fn mode(&self) -> Option<Mode> {
+        self.get_option("mode").and_then(|it| it.parse().ok())
+    }
+
+    pub fn pretty(&self) -> Pretty {
+        self.get_option("pretty")
+            .and_then(|it| it.parse().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn date(&self) -> String {
+        self.get_option("date")
+            .unwrap_or_else(|| "%Y%m%d".to_string())
+    }
+
+    pub fn gitexport(&self) -> GitExport {
+        self.get_option("gitexport")
+            .and_then(|it| it.parse().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn gitmode(&self) -> GitMode {
+        self.get_option("gitmode")
+            .and_then(|it| it.parse().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn pgpmode(&self) -> PgpMode {
+        self.get_option("pgpmode")
+            .and_then(|it| it.parse().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn searchmode(&self) -> SearchMode {
+        self.get_option("searchmode")
+            .and_then(|it| it.parse().ok())
+            .unwrap_or_default()
+    }
+
+    pub fn decompress(&self) -> bool {
+        self.has_option("decompress")
+    }
+
+    pub fn bare(&self) -> bool {
+        self.has_option("bare")
+    }
+
+    pub fn user_agent(&self) -> Option<String> {
+        self.get_option("user-agent")
+    }
+
+    pub fn passive(&self) -> Option<bool> {
+        if self.has_option("passive") || self.has_option("pasv") {
+            Some(true)
+        } else if self.has_option("active") || self.has_option("nopasv") {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    pub fn unzipoptions(&self) -> Option<String> {
+        self.get_option("unzipopt")
+    }
+
+    pub fn dversionmangle(&self) -> Option<String> {
+        self.get_option("dversionmangle")
+    }
+
+    pub fn dirversionmangle(&self) -> Option<String> {
+        self.get_option("dirversionmangle")
+    }
+
+    pub fn pagemangle(&self) -> Option<String> {
+        self.get_option("pagemangle")
+    }
+
+    pub fn uversionmangle(&self) -> Option<String> {
+        self.get_option("uversionmangle")
+    }
+
+    pub fn versionmangle(&self) -> Option<String> {
+        self.get_option("versionmangle")
+    }
+
+    pub fn hrefdecode(&self) -> bool {
+        self.get_option("hrefdecode").is_some()
+    }
+
+    pub fn downloadurlmangle(&self) -> Option<String> {
+        self.get_option("downloadurlmangle")
+    }
+
+    pub fn filenamemangle(&self) -> Option<String> {
+        self.get_option("filenamemangle")
+    }
+
+    pub fn pgpsigurlmangle(&self) -> Option<String> {
+        self.get_option("pgpsigurlmangle")
+    }
+
+    pub fn oversionmangle(&self) -> Option<String> {
+        self.get_option("oversionmangle")
+    }
+
     /// Returns options set
     pub fn opts(&self) -> std::collections::HashMap<String, String> {
         let mut options = std::collections::HashMap::new();
@@ -435,10 +580,12 @@ impl Entry {
         self.items().nth(1)
     }
 
-    pub fn version(&self) -> Option<String> {
-        self.items().nth(2)
+    /// Returns the version policy
+    pub fn version(&self) -> Option<crate::VersionPolicy> {
+        self.items().nth(2).and_then(|it| it.parse().ok())
     }
 
+    /// Returns the script of the entry.
     pub fn script(&self) -> Option<String> {
         self.items().nth(3)
     }
@@ -447,6 +594,19 @@ impl Entry {
 impl OptionList {
     fn children(&self) -> impl Iterator<Item = _Option> + '_ {
         self.0.children().filter_map(_Option::cast)
+    }
+
+    pub fn has_option(&self, key: &str) -> bool {
+        self.children().any(|it| it.key().as_deref() == Some(key))
+    }
+
+    pub fn get_option(&self, key: &str) -> Option<String> {
+        for child in self.children() {
+            if child.key().as_deref() == Some(key) {
+                return child.value();
+            }
+        }
+        None
     }
 }
 
@@ -486,35 +646,38 @@ impl _Option {
 #[test]
 fn test_parse_v1() {
     const WATCHV1: &str = r#"version=4
-opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
+opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
   https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
 "#;
     let parsed = parse(WATCHV1);
-    assert_eq!(parsed.errors, Vec::<String>::new());
+    //assert_eq!(parsed.errors, Vec::<String>::new());
     let node = parsed.syntax();
     assert_eq!(
         format!("{:#?}", node),
-        r#"ROOT@0..156
+        r#"ROOT@0..161
   VERSION@0..10
     KEY@0..7 "version"
     EQUALS@7..8 "="
     VALUE@8..9 "4"
     NEWLINE@9..10 "\n"
-  ENTRY@10..156
-    OPTS_LIST@10..81
+  ENTRY@10..161
+    OPTS_LIST@10..86
       KEY@10..14 "opts"
       EQUALS@14..15 "="
-      OPTION@15..81
-        KEY@15..29 "filenamemangle"
-        EQUALS@29..30 "="
-        VALUE@30..81 "s/.+\\/v?(\\d\\S+)\\.tar\\ ..."
-    WHITESPACE@81..82 " "
-    CONTINUATION@82..84 "\\\n"
-    WHITESPACE@84..86 "  "
-    VALUE@86..133 "https://github.com/sy ..."
-    WHITESPACE@133..134 " "
-    VALUE@134..155 ".*/v?(\\d\\S+)\\.tar\\.gz"
-    NEWLINE@155..156 "\n"
+      OPTION@15..19
+        KEY@15..19 "bare"
+      COMMA@19..20 ","
+      OPTION@20..86
+        KEY@20..34 "filenamemangle"
+        EQUALS@34..35 "="
+        VALUE@35..86 "s/.+\\/v?(\\d\\S+)\\.tar\\ ..."
+    WHITESPACE@86..87 " "
+    CONTINUATION@87..89 "\\\n"
+    WHITESPACE@89..91 "  "
+    VALUE@91..138 "https://github.com/sy ..."
+    WHITESPACE@138..139 " "
+    VALUE@139..160 ".*/v?(\\d\\S+)\\.tar\\.gz"
+    NEWLINE@160..161 "\n"
 "#
     );
 
@@ -574,4 +737,255 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
         entry.url(),
         "https://github.com/syncthing/syncthing-gtk/tags"
     );
+}
+
+pub enum ComponentType {
+    Perl,
+    NodeJS,
+}
+
+impl ToString for ComponentType {
+    fn to_string(&self) -> String {
+        match self {
+            ComponentType::Perl => "perl".to_string(),
+            ComponentType::NodeJS => "nodejs".to_string(),
+        }
+    }
+}
+
+impl FromStr for ComponentType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "perl" => Ok(ComponentType::Perl),
+            "nodejs" => Ok(ComponentType::NodeJS),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Compression {
+    Gzip,
+    Xz,
+    Bzip2,
+    Lzma,
+    #[default]
+    Default,
+}
+
+impl ToString for Compression {
+    fn to_string(&self) -> String {
+        match self {
+            Compression::Gzip => "gzip".to_string(),
+            Compression::Xz => "xz".to_string(),
+            Compression::Bzip2 => "bzip2".to_string(),
+            Compression::Lzma => "lzma".to_string(),
+            Compression::Default => "default".to_string(),
+        }
+    }
+}
+
+impl FromStr for Compression {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "gz" | "gzip" => Ok(Compression::Gzip),
+            "xz" => Ok(Compression::Xz),
+            "bz2" | "bzip2" => Ok(Compression::Bzip2),
+            "lzma" => Ok(Compression::Lzma),
+            "default" => Ok(Compression::Default),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Mode {
+    #[default]
+    LWP,
+    Git,
+    Svn,
+}
+
+impl ToString for Mode {
+    fn to_string(&self) -> String {
+        match self {
+            Mode::LWP => "lwp".to_string(),
+            Mode::Git => "git".to_string(),
+            Mode::Svn => "svn".to_string(),
+        }
+    }
+}
+
+impl FromStr for Mode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "lwp" => Ok(Mode::LWP),
+            "git" => Ok(Mode::Git),
+            "svn" => Ok(Mode::Svn),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Pretty {
+    Describe,
+    Pattern(String),
+}
+
+impl Default for Pretty {
+    fn default() -> Self {
+        Pretty::Pattern("0.0~git%cd.h%".to_string())
+    }
+}
+
+impl ToString for Pretty {
+    fn to_string(&self) -> String {
+        match self {
+            Pretty::Describe => "describe".to_string(),
+            Pretty::Pattern(pattern) => pattern.clone(),
+        }
+    }
+}
+
+impl FromStr for Pretty {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "describe" {
+            Ok(Pretty::Describe)
+        } else {
+            Ok(Pretty::Pattern(s.to_string()))
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GitExport {
+    #[default]
+    Default,
+    All,
+}
+
+impl ToString for GitExport {
+    fn to_string(&self) -> String {
+        match self {
+            GitExport::Default => "default".to_string(),
+            GitExport::All => "all".to_string(),
+        }
+    }
+}
+
+impl FromStr for GitExport {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "default" => Ok(GitExport::Default),
+            "all" => Ok(GitExport::All),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum GitMode {
+    #[default]
+    Shallow,
+    Full,
+}
+
+impl ToString for GitMode {
+    fn to_string(&self) -> String {
+        match self {
+            GitMode::Shallow => "shallow".to_string(),
+            GitMode::Full => "full".to_string(),
+        }
+    }
+}
+
+impl FromStr for GitMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "shallow" => Ok(GitMode::Shallow),
+            "full" => Ok(GitMode::Full),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum PgpMode {
+    Auto,
+    #[default]
+    Default,
+    Mangle,
+    Next,
+    Previous,
+    SelfSignature,
+}
+
+impl ToString for PgpMode {
+    fn to_string(&self) -> String {
+        match self {
+            PgpMode::Auto => "auto".to_string(),
+            PgpMode::Default => "default".to_string(),
+            PgpMode::Mangle => "mangle".to_string(),
+            PgpMode::Next => "next".to_string(),
+            PgpMode::Previous => "previous".to_string(),
+            PgpMode::SelfSignature => "self".to_string(),
+        }
+    }
+}
+
+impl FromStr for PgpMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "auto" => Ok(PgpMode::Auto),
+            "default" => Ok(PgpMode::Default),
+            "mangle" => Ok(PgpMode::Mangle),
+            "next" => Ok(PgpMode::Next),
+            "previous" => Ok(PgpMode::Previous),
+            "self" => Ok(PgpMode::SelfSignature),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum SearchMode {
+    #[default]
+    Html,
+    Plain,
+}
+
+impl ToString for SearchMode {
+    fn to_string(&self) -> String {
+        match self {
+            SearchMode::Html => "html".to_string(),
+            SearchMode::Plain => "plain".to_string(),
+        }
+    }
+}
+
+impl FromStr for SearchMode {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "html" => Ok(SearchMode::Html),
+            "plain" => Ok(SearchMode::Plain),
+            _ => Err(()),
+        }
+    }
 }

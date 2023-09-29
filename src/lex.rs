@@ -61,7 +61,7 @@ mod tests {
         assert_eq!(
             super::lex(
                 r#"version=4
-opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
+opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
   https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
 "#
             ),
@@ -72,6 +72,8 @@ opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
                 (NEWLINE, "\n".into()),
                 (KEY, "opts".into()),
                 (EQUALS, "=".into()),
+                (KEY, "bare".into()),
+                (COMMA, ",".into()),
                 (KEY, "filenamemangle".into()),
                 (EQUALS, "=".into()),
                 (

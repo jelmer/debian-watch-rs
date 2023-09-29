@@ -229,6 +229,7 @@ fn parse(text: &str) -> Parse {
             if let Some(v) = self.parse_version() {
                 version = v;
             }
+            // TODO: use version to influence parsing
             loop {
                 if !self.parse_watch_entry() {
                     break;
@@ -435,10 +436,12 @@ impl Entry {
         self.items().nth(1)
     }
 
+    /// Returns the version policy
     pub fn version(&self) -> Option<String> {
         self.items().nth(2)
     }
 
+    /// Returns the script of the entry.
     pub fn script(&self) -> Option<String> {
         self.items().nth(3)
     }

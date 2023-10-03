@@ -592,7 +592,7 @@ impl Entry {
     }
 
     /// Replace all substitutions and return the resulting URL.
-    pub fn format_url<'a>(&self, package: impl FnOnce() -> &'a str) -> url::Url {
+    pub fn format_url(&self, package: impl FnOnce() -> String) -> url::Url {
         subst(self.url().as_str(), package).parse().unwrap()
     }
 }
@@ -619,10 +619,12 @@ const SUBSTITUTIONS: &[(&str, &str)] = &[
     ("@DEB_EXT@", r"[\+~](debian|dfsg|ds|deb)(\.)?(\d+)?$"),
 ];
 
-pub fn subst<'a>(text: &str, package: impl FnOnce() -> &'a str) -> String {
+pub fn subst(text: &str, package: impl FnOnce() -> String) -> String {
     let mut substs = SUBSTITUTIONS.to_vec();
+    let package_name;
     if text.contains("@PACKAGE@") {
-        substs.push(("@PACKAGE@", package()));
+        package_name = Some(package());
+        substs.push(("@PACKAGE@", package_name.as_deref().unwrap()));
     }
 
     let mut text = text.to_string();
@@ -640,7 +642,7 @@ fn test_subst() {
         subst("@ANY_VERSION@", || unreachable!()),
         r"[-_]?(\d[\-+\.:\~\da-zA-Z]*)"
     );
-    assert_eq!(subst("@PACKAGE@", || "dulwich"), "dulwich");
+    assert_eq!(subst("@PACKAGE@", || "dulwich".to_string()), "dulwich");
 }
 
 impl OptionList {
@@ -790,7 +792,7 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
         "https://github.com/syncthing/syncthing-gtk/tags"
     );
     assert_eq!(
-        entry.format_url(|| "syncthing-gtk"),
+        entry.format_url(|| "syncthing-gtk".to_string()),
         "https://github.com/syncthing/syncthing-gtk/tags"
             .parse()
             .unwrap()
@@ -813,7 +815,7 @@ https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
     let entry = &entries[0];
     assert_eq!(entry.url(), "https://github.com/syncthing/@PACKAGE@/tags");
     assert_eq!(
-        entry.format_url(|| "syncthing-gtk"),
+        entry.format_url(|| "syncthing-gtk".to_string()),
         "https://github.com/syncthing/syncthing-gtk/tags"
             .parse()
             .unwrap()

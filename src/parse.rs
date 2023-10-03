@@ -589,6 +589,57 @@ impl Entry {
     pub fn script(&self) -> Option<String> {
         self.items().nth(3)
     }
+
+    /// Replace all substitutions and return the resulting URL.
+    pub fn format_url<'a>(&self, package: impl FnOnce() -> &'a str) -> url::Url {
+        subst(self.url().as_str(), package).parse().unwrap()
+    }
+}
+
+const SUBSTITUTIONS: &[(&str, &str)] = &[
+    // This is substituted with the source package name found in the first line
+    // of the debian/changelog file.
+    // "@PACKAGE@": None,
+    // This is substituted by the legal upstream version regex (capturing).
+    ("@ANY_VERSION@", r"[-_]?(\d[\-+\.:\~\da-zA-Z]*)"),
+    // This is substituted by the typical archive file extension regex
+    // (non-capturing).
+    (
+        "@ARCHIVE_EXT@",
+        r"(?i)\.(?:tar\.xz|tar\.bz2|tar\.gz|zip|tgz|tbz|txz)",
+    ),
+    // This is substituted by the typical signature file extension regex
+    // (non-capturing).
+    (
+        "@SIGNATURE_EXT@",
+        r"(?i)\.(?:tar\.xz|tar\.bz2|tar\.gz|zip|tgz|tbz|txz)\.(?:asc|pgp|gpg|sig|sign)",
+    ),
+    // This is substituted by the typical Debian extension regexp (capturing).
+    ("@DEB_EXT@", r"[\+~](debian|dfsg|ds|deb)(\.)?(\d+)?$"),
+];
+
+pub fn subst<'a>(text: &str, package: impl FnOnce() -> &'a str) -> String {
+    let mut substs = SUBSTITUTIONS.to_vec();
+    if text.contains("@PACKAGE@") {
+        substs.push(("@PACKAGE@", package()));
+    }
+
+    let mut text = text.to_string();
+
+    for (k, v) in substs {
+        text = text.replace(k, v);
+    }
+
+    text
+}
+
+#[test]
+fn test_subst() {
+    assert_eq!(
+        subst("@ANY_VERSION@", || unreachable!()),
+        r"[-_]?(\d[\-+\.:\~\da-zA-Z]*)"
+    );
+    assert_eq!(subst("@PACKAGE@", || "dulwich"), "dulwich");
 }
 
 impl OptionList {
@@ -736,6 +787,35 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
     assert_eq!(
         entry.url(),
         "https://github.com/syncthing/syncthing-gtk/tags"
+    );
+    assert_eq!(
+        entry.format_url(|| "syncthing-gtk"),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+            .parse()
+            .unwrap()
+    );
+}
+
+#[test]
+fn test_parse_v3() {
+    let parsed = parse(
+        r#"version=4
+https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
+# comment
+"#,
+    );
+    assert_eq!(parsed.errors, Vec::<String>::new());
+    let root = parsed.root();
+    assert_eq!(root.version(), 4);
+    let entries = root.entries().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry.url(), "https://github.com/syncthing/@PACKAGE@/tags");
+    assert_eq!(
+        entry.format_url(|| "syncthing-gtk"),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+            .parse()
+            .unwrap()
     );
 }
 

@@ -124,7 +124,7 @@ fn parse(text: &str) -> Parse {
             }
             self.builder.start_node(ENTRY.into());
             self.parse_options_list();
-            for i in 1..3 {
+            for i in 0..4 {
                 if self.current() == Some(NEWLINE) {
                     break;
                 }
@@ -140,18 +140,22 @@ fn parse(text: &str) -> Parse {
                         self.current(),
                         i
                     ));
-                    self.bump();
+                    if self.current().is_some() {
+                        self.bump();
+                    }
                     self.builder.finish_node();
                 } else {
                     self.bump();
                 }
                 self.skip_ws();
             }
-            if self.current() != Some(NEWLINE) {
+            if self.current() != Some(NEWLINE) && self.current() != None {
                 self.builder.start_node(ERROR.into());
                 self.errors
                     .push(format!("expected newline, not {:?}", self.current()));
-                self.bump();
+                if self.current().is_some() {
+                    self.bump();
+                }
                 self.builder.finish_node();
             } else {
                 self.bump();
@@ -194,7 +198,9 @@ fn parse(text: &str) -> Parse {
             } else {
                 self.builder.start_node(ERROR.into());
                 self.errors.push("expected `=`".to_string());
-                self.bump();
+                if self.current().is_some() {
+                    self.bump();
+                }
                 self.builder.finish_node();
             }
             self.builder.finish_node();
@@ -212,18 +218,33 @@ fn parse(text: &str) -> Parse {
                 if self.current() != Some(EQUALS) {
                     self.builder.start_node(ERROR.into());
                     self.errors.push("expected `=`".to_string());
-                    self.bump();
+                    if self.current().is_some() {
+                        self.bump();
+                    }
                     self.builder.finish_node();
                 } else {
                     self.bump();
                 }
+                let quoted = if self.current() == Some(QUOTE) {
+                    self.bump();
+                    true
+                } else {
+                    false
+                };
                 loop {
+                    if quoted {
+                        if self.current() == Some(QUOTE) {
+                            self.bump();
+                            break;
+                        }
+                        self.skip_ws();
+                    }
                     if !self.parse_option() {
                         break;
                     }
                     if self.current() == Some(COMMA) {
                         self.bump();
-                    } else {
+                    } else if !quoted {
                         break;
                     }
                 }
@@ -820,4 +841,92 @@ https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
             .parse()
             .unwrap()
     );
+}
+
+#[test]
+fn test_parse_v4() {
+    let cl: super::WatchFile = r#"version=4
+opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
+    https://github.com/example/example-cat/tags \
+        (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+    assert_eq!(cl.version(), 4);
+    let entries = cl.entries().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry.url(), "https://github.com/example/example-cat/tags");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+    assert!(entry.repack());
+    assert_eq!(entry.compression(), Some(Compression::Xz));
+    assert_eq!(entry.dversionmangle(), Some("s/\\+ds//".into()));
+    assert_eq!(entry.repacksuffix(), Some("+ds".into()));
+    assert_eq!(entry.script(), Some("uupdate".into()));
+    assert_eq!(
+        entry.format_url(|| "example-cat".to_string()),
+        "https://github.com/example/example-cat/tags"
+            .parse()
+            .unwrap()
+    );
+    assert_eq!(entry.version(), Some(VersionPolicy::Debian));
+}
+
+#[test]
+fn test_git_mode() {
+    let text = r#"version=3
+opts="mode=git, gitmode=shallow, pgpmode=gittag" \
+https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git \
+refs/tags/(.*) debian
+"#;
+    let parsed = parse(text);
+    assert_eq!(parsed.errors, Vec::<String>::new());
+    let cl = parsed.root();
+    assert_eq!(cl.version(), 3);
+    let entries = cl.entries().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(
+        entry.url(),
+        "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
+    );
+    assert_eq!(entry.matching_pattern(), Some("refs/tags/(.*)".into()));
+    assert_eq!(entry.version(), Some(VersionPolicy::Debian));
+    assert_eq!(entry.script(), None);
+    assert_eq!(entry.gitmode(), GitMode::Shallow);
+    assert_eq!(entry.pgpmode(), PgpMode::GitTag);
+    assert_eq!(entry.mode(), Some(Mode::Git));
+}
+
+#[test]
+fn test_parse_quoted() {
+    const WATCHV1: &str = r#"version=4
+opts="bare, filenamemangle=blah" \
+  https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
+"#;
+    let parsed = parse(WATCHV1);
+    //assert_eq!(parsed.errors, Vec::<String>::new());
+    let node = parsed.syntax();
+
+    let root = parsed.root();
+    assert_eq!(root.version(), 4);
+    let entries = root.entries().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+
+    assert_eq!(
+        entry.url(),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+    );
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.version(), None);
+    assert_eq!(entry.script(), None);
+
+    assert_eq!(node.text(), WATCHV1);
 }

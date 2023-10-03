@@ -161,6 +161,7 @@ pub enum PgpMode {
     Next,
     Previous,
     SelfSignature,
+    GitTag,
 }
 
 impl ToString for PgpMode {
@@ -172,6 +173,7 @@ impl ToString for PgpMode {
             PgpMode::Next => "next".to_string(),
             PgpMode::Previous => "previous".to_string(),
             PgpMode::SelfSignature => "self".to_string(),
+            PgpMode::GitTag => "gittag".to_string(),
         }
     }
 }
@@ -187,6 +189,7 @@ impl FromStr for PgpMode {
             "next" => Ok(PgpMode::Next),
             "previous" => Ok(PgpMode::Previous),
             "self" => Ok(PgpMode::SelfSignature),
+            "gittag" => Ok(PgpMode::GitTag),
             _ => Err(()),
         }
     }

@@ -44,6 +44,7 @@ pub(crate) enum SyntaxKind {
     KEY = 0,
     VALUE,
     EQUALS,
+    QUOTE,
     COMMA,
     CONTINUATION,
     NEWLINE,

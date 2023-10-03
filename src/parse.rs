@@ -591,6 +591,52 @@ impl Entry {
     }
 }
 
+const SUBSTITUTIONS: &[(&str, &str)] = &[
+    // This is substituted with the source package name found in the first line
+    // of the debian/changelog file.
+    // "@PACKAGE@": None,
+    // This is substituted by the legal upstream version regex (capturing).
+    ("@ANY_VERSION@", r"[-_]?(\d[\-+\.:\~\da-zA-Z]*)"),
+    // This is substituted by the typical archive file extension regex
+    // (non-capturing).
+    (
+        "@ARCHIVE_EXT@",
+        r"(?i)\.(?:tar\.xz|tar\.bz2|tar\.gz|zip|tgz|tbz|txz)",
+    ),
+    // This is substituted by the typical signature file extension regex
+    // (non-capturing).
+    (
+        "@SIGNATURE_EXT@",
+        r"(?i)\.(?:tar\.xz|tar\.bz2|tar\.gz|zip|tgz|tbz|txz)\.(?:asc|pgp|gpg|sig|sign)",
+    ),
+    // This is substituted by the typical Debian extension regexp (capturing).
+    ("@DEB_EXT@", r"[\+~](debian|dfsg|ds|deb)(\.)?(\d+)?$"),
+];
+
+pub fn subst<'a>(text: &str, package: impl FnOnce() -> &'a str) -> String {
+    let mut substs = SUBSTITUTIONS.to_vec();
+    if text.contains("@PACKAGE@") {
+        substs.push(("@PACKAGE@", package()));
+    }
+
+    let mut text = text.to_string();
+
+    for (k, v) in substs {
+        text = text.replace(k, v);
+    }
+
+    text
+}
+
+#[test]
+fn test_subst() {
+    assert_eq!(
+        subst("@ANY_VERSION@", || unreachable!()),
+        r"[-_]?(\d[\-+\.:\~\da-zA-Z]*)"
+    );
+    assert_eq!(subst("@PACKAGE@", || "dulwich"), "dulwich");
+}
+
 impl OptionList {
     fn children(&self) -> impl Iterator<Item = _Option> + '_ {
         self.0.children().filter_map(_Option::cast)

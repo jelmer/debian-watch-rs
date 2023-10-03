@@ -589,6 +589,11 @@ impl Entry {
     pub fn script(&self) -> Option<String> {
         self.items().nth(3)
     }
+
+    /// Replace all substitutions and return the resulting URL.
+    pub fn format_url<'a>(&self, package: impl FnOnce() -> &'a str) -> url::Url {
+        subst(self.url().as_str(), package).parse().unwrap()
+    }
 }
 
 const SUBSTITUTIONS: &[(&str, &str)] = &[
@@ -782,6 +787,35 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
     assert_eq!(
         entry.url(),
         "https://github.com/syncthing/syncthing-gtk/tags"
+    );
+    assert_eq!(
+        entry.format_url(|| "syncthing-gtk"),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+            .parse()
+            .unwrap()
+    );
+}
+
+#[test]
+fn test_parse_v3() {
+    let parsed = parse(
+        r#"version=4
+https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
+# comment
+"#,
+    );
+    assert_eq!(parsed.errors, Vec::<String>::new());
+    let root = parsed.root();
+    assert_eq!(root.version(), 4);
+    let entries = root.entries().collect::<Vec<_>>();
+    assert_eq!(entries.len(), 1);
+    let entry = &entries[0];
+    assert_eq!(entry.url(), "https://github.com/syncthing/@PACKAGE@/tags");
+    assert_eq!(
+        entry.format_url(|| "syncthing-gtk"),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+            .parse()
+            .unwrap()
     );
 }
 

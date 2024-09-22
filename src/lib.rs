@@ -38,7 +38,7 @@ pub use types::*;
 /// Let's start with defining all kinds of tokens and
 /// composite nodes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, missing_docs, clippy::upper_case_acronyms)]
 #[repr(u16)]
 pub(crate) enum SyntaxKind {
     KEY = 0,

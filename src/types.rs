@@ -1,16 +1,24 @@
 use std::str::FromStr;
 
+/// The type of the component
 pub enum ComponentType {
+    /// Perl component
     Perl,
+
+    /// NodeJS component
     NodeJS,
 }
 
-impl ToString for ComponentType {
-    fn to_string(&self) -> String {
-        match self {
-            ComponentType::Perl => "perl".to_string(),
-            ComponentType::NodeJS => "nodejs".to_string(),
-        }
+impl std::fmt::Display for ComponentType {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                ComponentType::Perl => "perl",
+                ComponentType::NodeJS => "nodejs",
+            }
+        )
     }
 }
 
@@ -27,24 +35,38 @@ impl FromStr for ComponentType {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Compression type
 pub enum Compression {
+    /// Gzip compression
     Gzip,
+
+    /// Xz compression
     Xz,
+
+    /// Bzip2 compression
     Bzip2,
+
+    /// Lzma compression
     Lzma,
+
     #[default]
+    /// Default compression
     Default,
 }
 
-impl ToString for Compression {
-    fn to_string(&self) -> String {
-        match self {
-            Compression::Gzip => "gzip".to_string(),
-            Compression::Xz => "xz".to_string(),
-            Compression::Bzip2 => "bzip2".to_string(),
-            Compression::Lzma => "lzma".to_string(),
-            Compression::Default => "default".to_string(),
-        }
+impl std::fmt::Display for Compression {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Compression::Gzip => "gzip",
+                Compression::Xz => "xz",
+                Compression::Bzip2 => "bzip2",
+                Compression::Lzma => "lzma",
+                Compression::Default => "default",
+            }
+        )
     }
 }
 
@@ -75,12 +97,16 @@ impl Default for Pretty {
     }
 }
 
-impl ToString for Pretty {
-    fn to_string(&self) -> String {
-        match self {
-            Pretty::Describe => "describe".to_string(),
-            Pretty::Pattern(pattern) => pattern.clone(),
-        }
+impl std::fmt::Display for Pretty {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Pretty::Describe => "describe",
+                Pretty::Pattern(pattern) => pattern,
+            }
+        )
     }
 }
 
@@ -103,12 +129,16 @@ pub enum GitExport {
     All,
 }
 
-impl ToString for GitExport {
-    fn to_string(&self) -> String {
-        match self {
-            GitExport::Default => "default".to_string(),
-            GitExport::All => "all".to_string(),
-        }
+impl std::fmt::Display for GitExport {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                GitExport::Default => "default".to_string(),
+                GitExport::All => "all".to_string(),
+            }
+        )
     }
 }
 
@@ -131,12 +161,16 @@ pub enum GitMode {
     Full,
 }
 
-impl ToString for GitMode {
-    fn to_string(&self) -> String {
-        match self {
-            GitMode::Shallow => "shallow".to_string(),
-            GitMode::Full => "full".to_string(),
-        }
+impl std::fmt::Display for GitMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                GitMode::Shallow => "shallow".to_string(),
+                GitMode::Full => "full".to_string(),
+            }
+        )
     }
 }
 
@@ -153,6 +187,7 @@ impl FromStr for GitMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// PGP mode
 pub enum PgpMode {
     Auto,
     #[default]
@@ -164,20 +199,23 @@ pub enum PgpMode {
     GitTag,
 }
 
-impl ToString for PgpMode {
-    fn to_string(&self) -> String {
-        match self {
-            PgpMode::Auto => "auto".to_string(),
-            PgpMode::Default => "default".to_string(),
-            PgpMode::Mangle => "mangle".to_string(),
-            PgpMode::Next => "next".to_string(),
-            PgpMode::Previous => "previous".to_string(),
-            PgpMode::SelfSignature => "self".to_string(),
-            PgpMode::GitTag => "gittag".to_string(),
-        }
+impl std::fmt::Display for PgpMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                PgpMode::Auto => "auto",
+                PgpMode::Default => "default",
+                PgpMode::Mangle => "mangle",
+                PgpMode::Next => "next",
+                PgpMode::Previous => "previous",
+                PgpMode::SelfSignature => "self",
+                PgpMode::GitTag => "gittag",
+            }
+        )
     }
 }
-
 impl FromStr for PgpMode {
     type Err = ();
 
@@ -196,18 +234,26 @@ impl FromStr for PgpMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// How to search for the upstream tarball
 pub enum SearchMode {
     #[default]
+    /// Search for the upstream tarball in the HTML page
     Html,
+
+    /// Search for the upstream tarball in the plain text page
     Plain,
 }
 
-impl ToString for SearchMode {
-    fn to_string(&self) -> String {
-        match self {
-            SearchMode::Html => "html".to_string(),
-            SearchMode::Plain => "plain".to_string(),
-        }
+impl std::fmt::Display for SearchMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                SearchMode::Html => "html",
+                SearchMode::Plain => "plain",
+            }
+        )
     }
 }
 
@@ -231,13 +277,17 @@ pub enum Mode {
     Svn,
 }
 
-impl ToString for Mode {
-    fn to_string(&self) -> String {
-        match self {
-            Mode::LWP => "lwp".to_string(),
-            Mode::Git => "git".to_string(),
-            Mode::Svn => "svn".to_string(),
-        }
+impl std::fmt::Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                Mode::LWP => "lwp",
+                Mode::Git => "git",
+                Mode::Svn => "svn",
+            }
+        )
     }
 }
 
@@ -255,9 +305,10 @@ impl FromStr for Mode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+/// The version policy to use when downloading upstream tarballs
 pub enum VersionPolicy {
     #[default]
-    // Requires the downloading upstream tarball to be newer than the version obtained from debian/changelog
+    /// Requires the downloading upstream tarball to be newer than the version obtained from debian/changelog
     Debian,
 
     /// Requires the upstream tarball to be newer than specified version
@@ -283,16 +334,16 @@ pub enum VersionPolicy {
     Checksum,
 }
 
-impl ToString for VersionPolicy {
-    fn to_string(&self) -> String {
+impl std::fmt::Display for VersionPolicy {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            VersionPolicy::Debian => "debian".to_string(),
-            VersionPolicy::Version(v) => format!("version-{}", v.to_string()),
-            VersionPolicy::Same => "same".to_string(),
-            VersionPolicy::Previous => "previous".to_string(),
-            VersionPolicy::Ignore => "ignore".to_string(),
-            VersionPolicy::Group => "group".to_string(),
-            VersionPolicy::Checksum => "checksum".to_string(),
+            VersionPolicy::Debian => write!(f, "debian"),
+            VersionPolicy::Version(v) => write!(f, "version-{}", v),
+            VersionPolicy::Same => write!(f, "same"),
+            VersionPolicy::Previous => write!(f, "previous"),
+            VersionPolicy::Ignore => write!(f, "ignore"),
+            VersionPolicy::Group => write!(f, "group"),
+            VersionPolicy::Checksum => write!(f, "checksum"),
         }
     }
 }

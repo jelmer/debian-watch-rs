@@ -49,6 +49,8 @@ struct Parse {
     green_node: GreenNode,
     #[allow(unused)]
     errors: Vec<String>,
+    #[allow(unused)]
+    version: i32,
 }
 
 fn parse(text: &str) -> Parse {
@@ -275,6 +277,7 @@ fn parse(text: &str) -> Parse {
             Parse {
                 green_node: self.builder.finish(),
                 errors: self.errors,
+                version,
             }
         }
         /// Advance one token, adding it to the current branch of the tree builder.
@@ -423,14 +426,17 @@ impl Version {
 }
 
 impl Entry {
+    /// List of options
     pub fn option_list(&self) -> Option<OptionList> {
         self.0.children().find_map(OptionList::cast)
     }
 
+    /// Get the value of an option
     pub fn get_option(&self, key: &str) -> Option<String> {
         self.option_list().and_then(|ol| ol.get_option(key))
     }
 
+    /// Check if an option is set
     pub fn has_option(&self, key: &str) -> bool {
         self.option_list().map_or(false, |ol| ol.has_option(key))
     }
@@ -440,19 +446,23 @@ impl Entry {
         self.get_option("component")
     }
 
+    /// Component type
     pub fn ctype(&self) -> Option<ComponentType> {
         self.get_option("ctype").and_then(|it| it.parse().ok())
     }
 
+    /// Compression method
     pub fn compression(&self) -> Option<Compression> {
         self.get_option("compression")
             .and_then(|it| it.parse().ok())
     }
 
+    /// Repack the tarball
     pub fn repack(&self) -> bool {
         self.has_option("repack")
     }
 
+    /// Repack suffix
     pub fn repacksuffix(&self) -> Option<String> {
         self.get_option("repacksuffix")
     }

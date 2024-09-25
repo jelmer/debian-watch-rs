@@ -86,8 +86,12 @@ impl FromStr for Compression {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// How to generate upstream version string from git tags
 pub enum Pretty {
+    /// Use git describe to generate the version string
     Describe,
+
+    /// Use a custom pattern to generate the version string
     Pattern(String),
 }
 
@@ -123,9 +127,14 @@ impl FromStr for Pretty {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Git export mode
 pub enum GitExport {
     #[default]
+    /// Export only files in the .orig.tar archive that are not ignored by the upstream.
     Default,
+
+    /// Export all files in the .orig.tar archive, ignoring any export-ignore git attributes
+    /// defined by the upstream.
     All,
 }
 
@@ -155,9 +164,13 @@ impl FromStr for GitExport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Git clone operation mode
 pub enum GitMode {
     #[default]
+    /// Clone the git repository in shallow mode
     Shallow,
+
+    /// Clone the git repository in full mode
     Full,
 }
 
@@ -187,15 +200,37 @@ impl FromStr for GitMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-/// PGP mode
+/// PGP verification mode
 pub enum PgpMode {
+    /// check possible URLs for the signature file and autogenerate a ``pgpsigurlmangle`` rule to
+    /// use it
     Auto,
+
     #[default]
+    /// Use pgpsigurlmangle=rules to generate the candidate upstream signature file URL string from
+    /// the upstream tarball URL.
+    ///
+    /// If the specified pgpsigurlmangle is missing, uscan checks possible URLs for the signature
+    /// file and suggests adding a pgpsigurlmangle rule.
+    ///
     Default,
+
+    /// Use pgpsigurlmangle=rules to generate the candidate upstream signature file URL string from the upstream tarball URL.
     Mangle,
+
+    /// Verify this downloaded tarball file with the signature file specified in the next watch
+    /// line. The next watch line must be pgpmode=previous. Otherwise, no verification occurs.
     Next,
+
+    /// Verify the downloaded tarball file specified in the previous watch line with this signature
+    /// file.  The previous watch line must be pgpmode=next.
     Previous,
+
+    /// Verify the downloaded file foo.ext with its self signature and extract its content tarball
+    /// file as foo.
     SelfSignature,
+
+    /// Verify tag signature if mode=git.
     GitTag,
 }
 
@@ -270,10 +305,19 @@ impl FromStr for SearchMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// Archive download mode
 pub enum Mode {
     #[default]
+    /// downloads the specified tarball from the archive URL on the web. Automatically internal
+    /// mode value is updated to either http or ftp by URL.
     LWP,
+
+    /// Access  the  upstream git archive directly with the git command and packs the source tree
+    /// with the specified tag via matching-pattern into spkg-version.tar.xz.
     Git,
+
+    /// Access the upstream Subversion archive directly with the svn command and packs the source
+    /// tree.
     Svn,
 }
 

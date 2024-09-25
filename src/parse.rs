@@ -151,7 +151,7 @@ fn parse(text: &str) -> Parse {
                 }
                 self.skip_ws();
             }
-            if self.current() != Some(NEWLINE) && self.current() != None {
+            if self.current() != Some(NEWLINE) && self.current().is_some() {
                 self.builder.start_node(ERROR.into());
                 self.errors
                     .push(format!("expected newline, not {:?}", self.current()));
@@ -335,6 +335,7 @@ macro_rules! ast_node {
     ($ast:ident, $kind:ident) => {
         #[derive(PartialEq, Eq, Hash)]
         #[repr(transparent)]
+        /// A node in the syntax tree for $ast
         pub struct $ast(SyntaxNode);
         impl $ast {
             #[allow(unused)]
@@ -362,6 +363,7 @@ ast_node!(OptionList, OPTS_LIST);
 ast_node!(_Option, OPTION);
 
 impl WatchFile {
+    /// Create a new watch file with specified version
     pub fn new(version: Option<u32>) -> WatchFile {
         let mut builder = GreenNodeBuilder::new();
 
@@ -447,14 +449,15 @@ impl Entry {
     }
 
     /// Component type
-    pub fn ctype(&self) -> Option<ComponentType> {
-        self.get_option("ctype").and_then(|it| it.parse().ok())
+    pub fn ctype(&self) -> Result<Option<ComponentType>, ()> {
+        self.get_option("ctype").map(|s| s.parse()).transpose()
     }
 
     /// Compression method
-    pub fn compression(&self) -> Option<Compression> {
+    pub fn compression(&self) -> Result<Option<Compression>, ()> {
         self.get_option("compression")
-            .and_then(|it| it.parse().ok())
+            .map(|s| s.parse())
+            .transpose()
     }
 
     /// Repack the tarball
@@ -467,57 +470,84 @@ impl Entry {
         self.get_option("repacksuffix")
     }
 
-    pub fn mode(&self) -> Option<Mode> {
-        self.get_option("mode").and_then(|it| it.parse().ok())
+    /// Retrieve the mode of the watch file entry.
+    pub fn mode(&self) -> Result<Mode, ()> {
+        Ok(self
+            .get_option("mode")
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or_default())
     }
 
-    pub fn pretty(&self) -> Pretty {
-        self.get_option("pretty")
-            .and_then(|it| it.parse().ok())
-            .unwrap_or_default()
+    /// Return the git pretty mode
+    pub fn pretty(&self) -> Result<Pretty, ()> {
+        Ok(self
+            .get_option("pretty")
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or_default())
     }
 
+    /// Set the date string used by the pretty option to an arbitrary format as an optional
+    /// opts argument when the matching-pattern is HEAD or heads/branch for git mode.
     pub fn date(&self) -> String {
         self.get_option("date")
             .unwrap_or_else(|| "%Y%m%d".to_string())
     }
 
-    pub fn gitexport(&self) -> GitExport {
-        self.get_option("gitexport")
-            .and_then(|it| it.parse().ok())
-            .unwrap_or_default()
+    /// Return the git export mode
+    pub fn gitexport(&self) -> Result<GitExport, ()> {
+        Ok(self
+            .get_option("gitexport")
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or_default())
     }
 
-    pub fn gitmode(&self) -> GitMode {
-        self.get_option("gitmode")
-            .and_then(|it| it.parse().ok())
-            .unwrap_or_default()
+    /// Return the git mode
+    pub fn gitmode(&self) -> Result<GitMode, ()> {
+        Ok(self
+            .get_option("gitmode")
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or_default())
     }
 
-    pub fn pgpmode(&self) -> PgpMode {
-        self.get_option("pgpmode")
-            .and_then(|it| it.parse().ok())
-            .unwrap_or_default()
+    /// Return the pgp mode
+    pub fn pgpmode(&self) -> Result<PgpMode, ()> {
+        Ok(self
+            .get_option("pgpmode")
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or_default())
     }
 
-    pub fn searchmode(&self) -> SearchMode {
-        self.get_option("searchmode")
-            .and_then(|it| it.parse().ok())
-            .unwrap_or_default()
+    /// Return the search mode
+    pub fn searchmode(&self) -> Result<SearchMode, ()> {
+        Ok(self
+            .get_option("searchmode")
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or_default())
     }
 
+    /// Return the decompression mode
     pub fn decompress(&self) -> bool {
         self.has_option("decompress")
     }
 
+    /// Whether to disable all site specific special case code such as URL director uses and page
+    /// content alterations.
     pub fn bare(&self) -> bool {
         self.has_option("bare")
     }
 
+    /// Set the user-agent string used to contact the HTTP(S) server as user-agent-string. (persistent)
     pub fn user_agent(&self) -> Option<String> {
         self.get_option("user-agent")
     }
 
+    /// Use PASV mode for the FTP connection.
     pub fn passive(&self) -> Option<bool> {
         if self.has_option("passive") || self.has_option("pasv") {
             Some(true)
@@ -528,46 +558,75 @@ impl Entry {
         }
     }
 
+    /// Add the extra options to use with the unzip command, such as -a, -aa, and -b, when executed
+    /// by mk-origtargz.
     pub fn unzipoptions(&self) -> Option<String> {
         self.get_option("unzipopt")
     }
 
+    /// Normalize the downloaded web page string.
     pub fn dversionmangle(&self) -> Option<String> {
         self.get_option("dversionmangle")
+            .or_else(|| self.get_option("versionmangle"))
     }
 
+    /// Normalize the directory path string matching the regex in a set of parentheses of
+    /// http://URL as the sortable version index string.  This is used
+    /// as the directory path sorting index only.
     pub fn dirversionmangle(&self) -> Option<String> {
         self.get_option("dirversionmangle")
     }
 
+    /// Normalize the downloaded web page string.
     pub fn pagemangle(&self) -> Option<String> {
         self.get_option("pagemangle")
     }
 
+    /// Normalize the candidate upstream version strings extracted from hrefs in the
+    /// source of the web page.  This is used as the version sorting index when selecting the
+    /// latest upstream version.
     pub fn uversionmangle(&self) -> Option<String> {
         self.get_option("uversionmangle")
+            .or_else(|| self.get_option("versionmangle"))
     }
 
+    /// Syntactic shorthand for uversionmangle=rules, dversionmangle=rules
     pub fn versionmangle(&self) -> Option<String> {
         self.get_option("versionmangle")
     }
 
+    /// Convert the selected upstream tarball href string from the percent-encoded hexadecimal
+    /// string to the decoded normal URL  string  for  obfuscated
+    /// web sites.  Only percent-encoding is available and it is decoded with
+    /// s/%([A-Fa-f\d]{2})/chr hex $1/eg.
     pub fn hrefdecode(&self) -> bool {
         self.get_option("hrefdecode").is_some()
     }
 
+    /// Convert the selected upstream tarball href string into the accessible URL for obfuscated
+    /// web sites.  This is run after hrefdecode.
     pub fn downloadurlmangle(&self) -> Option<String> {
         self.get_option("downloadurlmangle")
     }
 
+    /// Generate the upstream tarball filename from the selected href string if matching-pattern
+    /// can extract the latest upstream version <uversion> from the  selected  href  string.
+    /// Otherwise, generate the upstream tarball filename from its full URL string and set the
+    /// missing <uversion> from the generated upstream tarball filename.
+    ///
+    /// Without this option, the default upstream tarball filename is generated by taking the last
+    /// component of the URL and  removing everything  after any '?' or '#'.
     pub fn filenamemangle(&self) -> Option<String> {
         self.get_option("filenamemangle")
     }
 
+    /// Generate the candidate upstream signature file URL string from the upstream tarball URL.
     pub fn pgpsigurlmangle(&self) -> Option<String> {
         self.get_option("pgpsigurlmangle")
     }
 
+    /// Generate the version string <oversion> of the source tarball <spkg>_<oversion>.orig.tar.gz
+    /// from <uversion>.  This should be used to add a suffix such as +dfsg to a MUT package.
     pub fn oversionmangle(&self) -> Option<String> {
         self.get_option("oversionmangle")
     }
@@ -613,8 +672,8 @@ impl Entry {
     }
 
     /// Returns the version policy
-    pub fn version(&self) -> Option<crate::VersionPolicy> {
-        self.items().nth(2).and_then(|it| it.parse().ok())
+    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, String> {
+        self.items().nth(2).map(|it| it.parse()).transpose()
     }
 
     /// Returns the script of the entry.
@@ -779,7 +838,7 @@ opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
         entry.matching_pattern(),
         Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
     );
-    assert_eq!(entry.version(), None);
+    assert_eq!(entry.version(), Ok(None));
     assert_eq!(entry.script(), None);
 
     assert_eq!(node.text(), WATCHV1);
@@ -872,7 +931,7 @@ opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
         Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
     );
     assert!(entry.repack());
-    assert_eq!(entry.compression(), Some(Compression::Xz));
+    assert_eq!(entry.compression(), Ok(Some(Compression::Xz)));
     assert_eq!(entry.dversionmangle(), Some("s/\\+ds//".into()));
     assert_eq!(entry.repacksuffix(), Some("+ds".into()));
     assert_eq!(entry.script(), Some("uupdate".into()));
@@ -882,7 +941,7 @@ opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
             .parse()
             .unwrap()
     );
-    assert_eq!(entry.version(), Some(VersionPolicy::Debian));
+    assert_eq!(entry.version(), Ok(Some(VersionPolicy::Debian)));
 }
 
 #[test]
@@ -904,11 +963,11 @@ refs/tags/(.*) debian
         "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git"
     );
     assert_eq!(entry.matching_pattern(), Some("refs/tags/(.*)".into()));
-    assert_eq!(entry.version(), Some(VersionPolicy::Debian));
+    assert_eq!(entry.version(), Ok(Some(VersionPolicy::Debian)));
     assert_eq!(entry.script(), None);
-    assert_eq!(entry.gitmode(), GitMode::Shallow);
-    assert_eq!(entry.pgpmode(), PgpMode::GitTag);
-    assert_eq!(entry.mode(), Some(Mode::Git));
+    assert_eq!(entry.gitmode(), Ok(GitMode::Shallow));
+    assert_eq!(entry.pgpmode(), Ok(PgpMode::GitTag));
+    assert_eq!(entry.mode(), Ok(Mode::Git));
 }
 
 #[test]
@@ -935,7 +994,7 @@ opts="bare, filenamemangle=blah" \
         entry.matching_pattern(),
         Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
     );
-    assert_eq!(entry.version(), None);
+    assert_eq!(entry.version(), Ok(None));
     assert_eq!(entry.script(), None);
 
     assert_eq!(node.text(), WATCHV1);

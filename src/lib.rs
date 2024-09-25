@@ -1,3 +1,4 @@
+#![deny(missing_docs)]
 //! Formatting-preserving parser and editor for Debian watch files
 //!
 //! # Example

@@ -1,8 +1,8 @@
-use crate::lex::lex;
-use crate::types::*;
-use crate::SyntaxKind;
-use crate::SyntaxKind::*;
-use crate::DEFAULT_VERSION;
+use create::lex::lex;
+use create::types::*;
+use create::SyntaxKind;
+use create::SyntaxKind::*;
+use create::DEFAULT_VERSION;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -672,7 +672,7 @@ impl Entry {
     }
 
     /// Returns the version policy
-    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, String> {
+    pub fn version(&self) -> Result<Option<create::VersionPolicy>, String> {
         self.items().nth(2).map(|it| it.parse()).transpose()
     }
 

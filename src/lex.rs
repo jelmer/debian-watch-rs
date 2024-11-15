@@ -1,8 +1,8 @@
-use crate::SyntaxKind;
-use crate::SyntaxKind::*;
+use create::SyntaxKind;
+use create::SyntaxKind::*;
 
 /// Split the input string into a flat list of tokens
-pub(crate) fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
+pub(create) fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
     fn tok(t: SyntaxKind) -> m_lexer::TokenKind {
         let sk = rowan::SyntaxKind::from(t);
         m_lexer::TokenKind(sk.0)
@@ -52,7 +52,7 @@ pub(crate) fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
 
 #[cfg(test)]
 mod tests {
-    use crate::SyntaxKind::*;
+    use create::SyntaxKind::*;
     #[test]
     fn test_empty() {
         assert_eq!(super::lex(""), vec![]);

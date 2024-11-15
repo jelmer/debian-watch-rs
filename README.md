@@ -1,7 +1,7 @@
 Format-preserving parser and editor for Debian watch files
 ==========================================================
 
-This crate supports reading, editing and writing Debian watch files,
+This create supports reading, editing and writing Debian watch files,
 while preserving the original contents byte-for-byte.
 
 Example:

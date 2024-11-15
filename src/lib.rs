@@ -41,7 +41,7 @@ pub use types::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[allow(non_camel_case_types, missing_docs, clippy::upper_case_acronyms)]
 #[repr(u16)]
-pub(crate) enum SyntaxKind {
+pub(create) enum SyntaxKind {
     KEY = 0,
     VALUE,
     EQUALS,
@@ -68,8 +68,8 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
-pub use crate::parse::Entry;
-pub use crate::parse::WatchFile;
+pub use create::parse::Entry;
+pub use create::parse::WatchFile;
 
 #[cfg(test)]
 mod tests {

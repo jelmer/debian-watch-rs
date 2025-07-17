@@ -1,5 +1,22 @@
 use std::str::FromStr;
 
+/// Error type for parsing watch file types
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    /// The name of the type being parsed
+    pub type_name: &'static str,
+    /// The invalid value that caused the error
+    pub value: String,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Invalid {} value: '{}'", self.type_name, self.value)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
 /// The type of the component
 pub enum ComponentType {
     /// Perl component
@@ -11,25 +28,24 @@ pub enum ComponentType {
 
 impl std::fmt::Display for ComponentType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                ComponentType::Perl => "perl",
-                ComponentType::NodeJS => "nodejs",
-            }
-        )
+        match self {
+            ComponentType::Perl => f.write_str("perl"),
+            ComponentType::NodeJS => f.write_str("nodejs"),
+        }
     }
 }
 
 impl FromStr for ComponentType {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "perl" => Ok(ComponentType::Perl),
             "nodejs" => Ok(ComponentType::NodeJS),
-            _ => Err(()),
+            _ => Err(ParseError {
+                type_name: "ComponentType",
+                value: s.to_string(),
+            }),
         }
     }
 }
@@ -56,22 +72,18 @@ pub enum Compression {
 
 impl std::fmt::Display for Compression {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Compression::Gzip => "gzip",
-                Compression::Xz => "xz",
-                Compression::Bzip2 => "bzip2",
-                Compression::Lzma => "lzma",
-                Compression::Default => "default",
-            }
-        )
+        match self {
+            Compression::Gzip => f.write_str("gzip"),
+            Compression::Xz => f.write_str("xz"),
+            Compression::Bzip2 => f.write_str("bzip2"),
+            Compression::Lzma => f.write_str("lzma"),
+            Compression::Default => f.write_str("default"),
+        }
     }
 }
 
 impl FromStr for Compression {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -80,7 +92,10 @@ impl FromStr for Compression {
             "bz2" | "bzip2" => Ok(Compression::Bzip2),
             "lzma" => Ok(Compression::Lzma),
             "default" => Ok(Compression::Default),
-            _ => Err(()),
+            _ => Err(ParseError {
+                type_name: "Compression",
+                value: s.to_string(),
+            }),
         }
     }
 }
@@ -103,19 +118,15 @@ impl Default for Pretty {
 
 impl std::fmt::Display for Pretty {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Pretty::Describe => "describe",
-                Pretty::Pattern(pattern) => pattern,
-            }
-        )
+        match self {
+            Pretty::Describe => f.write_str("describe"),
+            Pretty::Pattern(pattern) => f.write_str(pattern),
+        }
     }
 }
 
 impl FromStr for Pretty {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         if s == "describe" {
@@ -140,25 +151,24 @@ pub enum GitExport {
 
 impl std::fmt::Display for GitExport {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                GitExport::Default => "default".to_string(),
-                GitExport::All => "all".to_string(),
-            }
-        )
+        match self {
+            GitExport::Default => f.write_str("default"),
+            GitExport::All => f.write_str("all"),
+        }
     }
 }
 
 impl FromStr for GitExport {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "default" => Ok(GitExport::Default),
             "all" => Ok(GitExport::All),
-            _ => Err(()),
+            _ => Err(ParseError {
+                type_name: "GitExport",
+                value: s.to_string(),
+            }),
         }
     }
 }
@@ -176,25 +186,24 @@ pub enum GitMode {
 
 impl std::fmt::Display for GitMode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                GitMode::Shallow => "shallow".to_string(),
-                GitMode::Full => "full".to_string(),
-            }
-        )
+        match self {
+            GitMode::Shallow => f.write_str("shallow"),
+            GitMode::Full => f.write_str("full"),
+        }
     }
 }
 
 impl FromStr for GitMode {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "shallow" => Ok(GitMode::Shallow),
             "full" => Ok(GitMode::Full),
-            _ => Err(()),
+            _ => Err(ParseError {
+                type_name: "GitMode",
+                value: s.to_string(),
+            }),
         }
     }
 }
@@ -236,23 +245,19 @@ pub enum PgpMode {
 
 impl std::fmt::Display for PgpMode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                PgpMode::Auto => "auto",
-                PgpMode::Default => "default",
-                PgpMode::Mangle => "mangle",
-                PgpMode::Next => "next",
-                PgpMode::Previous => "previous",
-                PgpMode::SelfSignature => "self",
-                PgpMode::GitTag => "gittag",
-            }
-        )
+        match self {
+            PgpMode::Auto => f.write_str("auto"),
+            PgpMode::Default => f.write_str("default"),
+            PgpMode::Mangle => f.write_str("mangle"),
+            PgpMode::Next => f.write_str("next"),
+            PgpMode::Previous => f.write_str("previous"),
+            PgpMode::SelfSignature => f.write_str("self"),
+            PgpMode::GitTag => f.write_str("gittag"),
+        }
     }
 }
 impl FromStr for PgpMode {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -263,7 +268,10 @@ impl FromStr for PgpMode {
             "previous" => Ok(PgpMode::Previous),
             "self" => Ok(PgpMode::SelfSignature),
             "gittag" => Ok(PgpMode::GitTag),
-            _ => Err(()),
+            _ => Err(ParseError {
+                type_name: "PgpMode",
+                value: s.to_string(),
+            }),
         }
     }
 }
@@ -281,25 +289,24 @@ pub enum SearchMode {
 
 impl std::fmt::Display for SearchMode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                SearchMode::Html => "html",
-                SearchMode::Plain => "plain",
-            }
-        )
+        match self {
+            SearchMode::Html => f.write_str("html"),
+            SearchMode::Plain => f.write_str("plain"),
+        }
     }
 }
 
 impl FromStr for SearchMode {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "html" => Ok(SearchMode::Html),
             "plain" => Ok(SearchMode::Plain),
-            _ => Err(()),
+            _ => Err(ParseError {
+                type_name: "SearchMode",
+                value: s.to_string(),
+            }),
         }
     }
 }
@@ -323,27 +330,26 @@ pub enum Mode {
 
 impl std::fmt::Display for Mode {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(
-            f,
-            "{}",
-            match self {
-                Mode::LWP => "lwp",
-                Mode::Git => "git",
-                Mode::Svn => "svn",
-            }
-        )
+        match self {
+            Mode::LWP => f.write_str("lwp"),
+            Mode::Git => f.write_str("git"),
+            Mode::Svn => f.write_str("svn"),
+        }
     }
 }
 
 impl FromStr for Mode {
-    type Err = ();
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "lwp" => Ok(Mode::LWP),
             "git" => Ok(Mode::Git),
             "svn" => Ok(Mode::Svn),
-            _ => Err(()),
+            _ => Err(ParseError {
+                type_name: "Mode",
+                value: s.to_string(),
+            }),
         }
     }
 }

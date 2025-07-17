@@ -86,8 +86,8 @@ fn parse(text: &str) -> Parse {
                         .push(format!("expected value, got {:?}", self.current()));
                     self.bump();
                     self.builder.finish_node();
-                } else {
-                    let version_str = self.tokens.last().unwrap().1.clone();
+                } else if let Some((_, value)) = self.tokens.last() {
+                    let version_str = value;
                     match version_str.parse() {
                         Ok(v) => {
                             version = Some(v);
@@ -101,6 +101,10 @@ fn parse(text: &str) -> Parse {
                             self.builder.finish_node();
                         }
                     }
+                } else {
+                    self.builder.start_node(ERROR.into());
+                    self.errors.push("expected version value".to_string());
+                    self.builder.finish_node();
                 }
                 if self.current() != Some(NEWLINE) {
                     self.builder.start_node(ERROR.into());
@@ -282,8 +286,9 @@ fn parse(text: &str) -> Parse {
         }
         /// Advance one token, adding it to the current branch of the tree builder.
         fn bump(&mut self) {
-            let (kind, text) = self.tokens.pop().unwrap();
-            self.builder.token(kind.into(), text.as_str());
+            if let Some((kind, text)) = self.tokens.pop() {
+                self.builder.token(kind.into(), text.as_str());
+            }
         }
         /// Peek at the first unprocessed token
         fn current(&self) -> Option<SyntaxKind> {
@@ -314,7 +319,6 @@ fn parse(text: &str) -> Parse {
 /// It is also immutable, like a GreenNode,
 /// but it contains parent pointers, offsets, and
 /// has identity semantics.
-
 type SyntaxNode = rowan::SyntaxNode<Lang>;
 #[allow(unused)]
 type SyntaxToken = rowan::SyntaxToken<Lang>;
@@ -327,7 +331,7 @@ impl Parse {
     }
 
     fn root(&self) -> WatchFile {
-        WatchFile::cast(self.syntax()).unwrap()
+        WatchFile::cast(self.syntax()).expect("root node should be a WatchFile")
     }
 }
 
@@ -348,9 +352,9 @@ macro_rules! ast_node {
             }
         }
 
-        impl ToString for $ast {
-            fn to_string(&self) -> String {
-                self.0.text().to_string()
+        impl std::fmt::Display for $ast {
+            fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "{}", self.0.text())
             }
         }
     };
@@ -416,7 +420,7 @@ impl Version {
             .find_map(|it| match it {
                 SyntaxElement::Token(token) => {
                     if token.kind() == VALUE {
-                        Some(token.text().parse().unwrap())
+                        token.text().parse().ok()
                     } else {
                         None
                     }
@@ -440,7 +444,7 @@ impl Entry {
 
     /// Check if an option is set
     pub fn has_option(&self, key: &str) -> bool {
-        self.option_list().map_or(false, |ol| ol.has_option(key))
+        self.option_list().is_some_and(|ol| ol.has_option(key))
     }
 
     /// The name of the secondary source tarball
@@ -449,12 +453,12 @@ impl Entry {
     }
 
     /// Component type
-    pub fn ctype(&self) -> Result<Option<ComponentType>, ()> {
+    pub fn ctype(&self) -> Result<Option<ComponentType>, crate::types::ParseError> {
         self.get_option("ctype").map(|s| s.parse()).transpose()
     }
 
     /// Compression method
-    pub fn compression(&self) -> Result<Option<Compression>, ()> {
+    pub fn compression(&self) -> Result<Option<Compression>, crate::types::ParseError> {
         self.get_option("compression")
             .map(|s| s.parse())
             .transpose()
@@ -471,7 +475,7 @@ impl Entry {
     }
 
     /// Retrieve the mode of the watch file entry.
-    pub fn mode(&self) -> Result<Mode, ()> {
+    pub fn mode(&self) -> Result<Mode, crate::types::ParseError> {
         Ok(self
             .get_option("mode")
             .map(|s| s.parse())
@@ -480,7 +484,7 @@ impl Entry {
     }
 
     /// Return the git pretty mode
-    pub fn pretty(&self) -> Result<Pretty, ()> {
+    pub fn pretty(&self) -> Result<Pretty, crate::types::ParseError> {
         Ok(self
             .get_option("pretty")
             .map(|s| s.parse())
@@ -496,7 +500,7 @@ impl Entry {
     }
 
     /// Return the git export mode
-    pub fn gitexport(&self) -> Result<GitExport, ()> {
+    pub fn gitexport(&self) -> Result<GitExport, crate::types::ParseError> {
         Ok(self
             .get_option("gitexport")
             .map(|s| s.parse())
@@ -505,7 +509,7 @@ impl Entry {
     }
 
     /// Return the git mode
-    pub fn gitmode(&self) -> Result<GitMode, ()> {
+    pub fn gitmode(&self) -> Result<GitMode, crate::types::ParseError> {
         Ok(self
             .get_option("gitmode")
             .map(|s| s.parse())
@@ -514,7 +518,7 @@ impl Entry {
     }
 
     /// Return the pgp mode
-    pub fn pgpmode(&self) -> Result<PgpMode, ()> {
+    pub fn pgpmode(&self) -> Result<PgpMode, crate::types::ParseError> {
         Ok(self
             .get_option("pgpmode")
             .map(|s| s.parse())
@@ -523,7 +527,7 @@ impl Entry {
     }
 
     /// Return the search mode
-    pub fn searchmode(&self) -> Result<SearchMode, ()> {
+    pub fn searchmode(&self) -> Result<SearchMode, crate::types::ParseError> {
         Ok(self
             .get_option("searchmode")
             .map(|s| s.parse())
@@ -663,7 +667,7 @@ impl Entry {
 
     /// Returns the URL of the entry.
     pub fn url(&self) -> String {
-        self.items().next().unwrap()
+        self.items().next().unwrap_or_default()
     }
 
     /// Returns the matching pattern of the entry.
@@ -682,8 +686,11 @@ impl Entry {
     }
 
     /// Replace all substitutions and return the resulting URL.
-    pub fn format_url(&self, package: impl FnOnce() -> String) -> url::Url {
-        subst(self.url().as_str(), package).parse().unwrap()
+    pub fn format_url(
+        &self,
+        package: impl FnOnce() -> String,
+    ) -> Result<url::Url, url::ParseError> {
+        subst(self.url().as_str(), package).parse()
     }
 }
 
@@ -710,20 +717,27 @@ const SUBSTITUTIONS: &[(&str, &str)] = &[
 ];
 
 pub fn subst(text: &str, package: impl FnOnce() -> String) -> String {
-    let mut substs = SUBSTITUTIONS.to_vec();
-    let package_name;
-    if text.contains("@PACKAGE@") {
-        package_name = Some(package());
-        substs.push(("@PACKAGE@", package_name.as_deref().unwrap()));
+    // Early return if no substitutions are needed
+    if !text.contains('@') {
+        return text.to_string();
     }
 
-    let mut text = text.to_string();
+    let mut result = text.to_string();
 
-    for (k, v) in substs {
-        text = text.replace(k, v);
+    // Apply substitutions from SUBSTITUTIONS
+    for (pattern, replacement) in SUBSTITUTIONS {
+        if result.contains(pattern) {
+            result = result.replace(pattern, replacement);
+        }
     }
 
-    text
+    // Handle @PACKAGE@ substitution if needed
+    if result.contains("@PACKAGE@") {
+        let package_name = package();
+        result = result.replace("@PACKAGE@", &package_name);
+    }
+
+    result
 }
 
 #[test]
@@ -882,7 +896,7 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
         "https://github.com/syncthing/syncthing-gtk/tags"
     );
     assert_eq!(
-        entry.format_url(|| "syncthing-gtk".to_string()),
+        entry.format_url(|| "syncthing-gtk".to_string()).unwrap(),
         "https://github.com/syncthing/syncthing-gtk/tags"
             .parse()
             .unwrap()
@@ -905,7 +919,7 @@ https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
     let entry = &entries[0];
     assert_eq!(entry.url(), "https://github.com/syncthing/@PACKAGE@/tags");
     assert_eq!(
-        entry.format_url(|| "syncthing-gtk".to_string()),
+        entry.format_url(|| "syncthing-gtk".to_string()).unwrap(),
         "https://github.com/syncthing/syncthing-gtk/tags"
             .parse()
             .unwrap()
@@ -936,7 +950,7 @@ opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
     assert_eq!(entry.repacksuffix(), Some("+ds".into()));
     assert_eq!(entry.script(), Some("uupdate".into()));
     assert_eq!(
-        entry.format_url(|| "example-cat".to_string()),
+        entry.format_url(|| "example-cat".to_string()).unwrap(),
         "https://github.com/example/example-cat/tags"
             .parse()
             .unwrap()

@@ -94,7 +94,7 @@ impl Parse<WatchFile> {
 struct InternalParse {
     green_node: GreenNode,
     errors: Vec<String>,
-    version: i32,
+    version: u32,
 }
 
 fn parse(text: &str) -> InternalParse {
@@ -110,7 +110,7 @@ fn parse(text: &str) -> InternalParse {
     }
 
     impl Parser {
-        fn parse_version(&mut self) -> Option<i32> {
+        fn parse_version(&mut self) -> Option<u32> {
             let mut version = None;
             if self.tokens.last() == Some(&(KEY, "version".to_string())) {
                 self.builder.start_node(VERSION.into());
@@ -547,7 +547,7 @@ impl Entry {
     /// opts argument when the matching-pattern is HEAD or heads/branch for git mode.
     pub fn date(&self) -> String {
         self.get_option("date")
-            .unwrap_or_else(|| "%Y%m%d".to_string())
+            .unwrap_or_else(|| "%Y%m%d".into())
     }
 
     /// Return the git export mode
@@ -727,7 +727,7 @@ impl Entry {
     }
 
     /// Returns the version policy
-    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, String> {
+    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, crate::types::ParseError> {
         self.items().nth(2).map(|it| it.parse()).transpose()
     }
 
@@ -773,22 +773,20 @@ pub fn subst(text: &str, package: impl FnOnce() -> String) -> String {
         return text.to_string();
     }
 
-    let mut result = text.to_string();
-
-    // Apply substitutions from SUBSTITUTIONS
-    for (pattern, replacement) in SUBSTITUTIONS {
-        if result.contains(pattern) {
-            result = result.replace(pattern, replacement);
-        }
-    }
+    // Apply all substitutions in a single pass using fold
+    let result = SUBSTITUTIONS
+        .iter()
+        .fold(text.to_string(), |acc, (pattern, replacement)| {
+            acc.replace(pattern, replacement)
+        });
 
     // Handle @PACKAGE@ substitution if needed
     if result.contains("@PACKAGE@") {
         let package_name = package();
-        result = result.replace("@PACKAGE@", &package_name);
+        result.replace("@PACKAGE@", &package_name)
+    } else {
+        result
     }
-
-    result
 }
 
 #[test]
@@ -810,12 +808,14 @@ impl OptionList {
     }
 
     pub fn get_option(&self, key: &str) -> Option<String> {
-        for child in self.children() {
-            if child.key().as_deref() == Some(key) {
-                return child.value();
-            }
-        }
-        None
+        self.children()
+            .find_map(|child| {
+                if child.key().as_deref() == Some(key) {
+                    child.value()
+                } else {
+                    None
+                }
+            })
     }
 }
 

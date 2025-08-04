@@ -399,7 +399,7 @@ impl std::fmt::Display for VersionPolicy {
 }
 
 impl std::str::FromStr for VersionPolicy {
-    type Err = String;
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -413,10 +413,16 @@ impl std::str::FromStr for VersionPolicy {
                 let v = s.trim_start_matches("version-");
                 Ok(VersionPolicy::Version(
                     v.parse::<debversion::Version>()
-                        .map_err(|e| e.to_string())?,
+                        .map_err(|_| ParseError {
+                            type_name: "VersionPolicy",
+                            value: s.to_string(),
+                        })?,
                 ))
             }
-            _ => Err(format!("Unknown version policy: {}", s)),
+            _ => Err(ParseError {
+                type_name: "VersionPolicy",
+                value: s.to_string(),
+            }),
         }
     }
 }

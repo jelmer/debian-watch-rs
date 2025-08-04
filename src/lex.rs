@@ -43,7 +43,7 @@ pub(crate) fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
         .into_iter()
         .map(|t| (t.len, kind(t.kind)))
         .scan(0usize, |start_offset, (len, kind)| {
-            let s: String = text[*start_offset..*start_offset + len].into();
+            let s = text[*start_offset..*start_offset + len].to_string();
             *start_offset += len;
             Some((kind, s))
         })

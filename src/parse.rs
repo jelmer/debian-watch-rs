@@ -94,7 +94,6 @@ impl Parse<WatchFile> {
 struct InternalParse {
     green_node: GreenNode,
     errors: Vec<String>,
-    version: u32,
 }
 
 fn parse(text: &str) -> InternalParse {
@@ -304,11 +303,10 @@ fn parse(text: &str) -> InternalParse {
         }
 
         fn parse(mut self) -> InternalParse {
-            let mut version = 1;
             // Make sure that the root node covers all source
             self.builder.start_node(ROOT.into());
-            if let Some(v) = self.parse_version() {
-                version = v;
+            if let Some(_v) = self.parse_version() {
+                // Version is stored in the syntax tree, no need to track separately
             }
             // TODO: use version to influence parsing
             loop {
@@ -325,7 +323,6 @@ fn parse(text: &str) -> InternalParse {
             InternalParse {
                 green_node: self.builder.finish(),
                 errors: self.errors,
-                version,
             }
         }
         /// Advance one token, adding it to the current branch of the tree builder.

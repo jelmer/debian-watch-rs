@@ -4,6 +4,7 @@ use crate::SyntaxKind;
 use crate::SyntaxKind::*;
 use crate::DEFAULT_VERSION;
 use std::str::FromStr;
+use std::marker::PhantomData;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParseError(Vec<String>);
@@ -43,17 +44,59 @@ use rowan::GreenNode;
 /// of currently in-progress nodes
 use rowan::GreenNodeBuilder;
 
-/// The parse results are stored as a "green tree".
-/// We'll discuss working with the results later
-struct Parse {
-    green_node: GreenNode,
-    #[allow(unused)]
+/// Thread-safe parse result that can be stored in incremental computation systems like Salsa.
+/// The type parameter T represents the root AST node type (e.g., WatchFile).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parse<T> {
+    /// The immutable green tree that can be shared across threads
+    green: GreenNode,
+    /// Parse errors encountered during parsing
     errors: Vec<String>,
-    #[allow(unused)]
-    version: i32,
+    /// Phantom type to associate this parse result with a specific AST type
+    _ty: PhantomData<T>,
 }
 
-fn parse(text: &str) -> Parse {
+impl<T> Parse<T> {
+    /// Create a new parse result
+    fn new(green: GreenNode, errors: Vec<String>) -> Self {
+        Parse {
+            green,
+            errors,
+            _ty: PhantomData,
+        }
+    }
+
+    /// Get the green node
+    pub fn green(&self) -> &GreenNode {
+        &self.green
+    }
+
+    /// Get the parse errors
+    pub fn errors(&self) -> &[String] {
+        &self.errors
+    }
+
+    /// Check if there were any parse errors
+    pub fn is_ok(&self) -> bool {
+        self.errors.is_empty()
+    }
+}
+
+impl Parse<WatchFile> {
+    /// Get the root WatchFile node
+    pub fn tree(&self) -> WatchFile {
+        WatchFile::cast(SyntaxNode::new_root(self.green.clone()))
+            .expect("root node should be a WatchFile")
+    }
+}
+
+// The internal parse result used during parsing
+struct InternalParse {
+    green_node: GreenNode,
+    errors: Vec<String>,
+}
+
+fn parse(text: &str) -> InternalParse {
     struct Parser {
         /// input tokens, including whitespace,
         /// in *reverse* order.
@@ -66,7 +109,7 @@ fn parse(text: &str) -> Parse {
     }
 
     impl Parser {
-        fn parse_version(&mut self) -> Option<i32> {
+        fn parse_version(&mut self) -> Option<u32> {
             let mut version = None;
             if self.tokens.last() == Some(&(KEY, "version".to_string())) {
                 self.builder.start_node(VERSION.into());
@@ -259,12 +302,11 @@ fn parse(text: &str) -> Parse {
             }
         }
 
-        fn parse(mut self) -> Parse {
-            let mut version = 1;
+        fn parse(mut self) -> InternalParse {
             // Make sure that the root node covers all source
             self.builder.start_node(ROOT.into());
-            if let Some(v) = self.parse_version() {
-                version = v;
+            if let Some(_v) = self.parse_version() {
+                // Version is stored in the syntax tree, no need to track separately
             }
             // TODO: use version to influence parsing
             loop {
@@ -278,10 +320,9 @@ fn parse(text: &str) -> Parse {
             self.builder.finish_node();
 
             // Turn the builder into a GreenNode
-            Parse {
+            InternalParse {
                 green_node: self.builder.finish(),
                 errors: self.errors,
-                version,
             }
         }
         /// Advance one token, adding it to the current branch of the tree builder.
@@ -325,7 +366,7 @@ type SyntaxToken = rowan::SyntaxToken<Lang>;
 #[allow(unused)]
 type SyntaxElement = rowan::NodeOrToken<SyntaxNode, SyntaxToken>;
 
-impl Parse {
+impl InternalParse {
     fn syntax(&self) -> SyntaxNode {
         SyntaxNode::new_root(self.green_node.clone())
     }
@@ -337,7 +378,7 @@ impl Parse {
 
 macro_rules! ast_node {
     ($ast:ident, $kind:ident) => {
-        #[derive(PartialEq, Eq, Hash)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash)]
         #[repr(transparent)]
         /// A node in the syntax tree for $ast
         pub struct $ast(SyntaxNode);
@@ -410,6 +451,13 @@ impl FromStr for WatchFile {
             Err(ParseError(parsed.errors))
         }
     }
+}
+
+/// Parse a watch file and return a thread-safe parse result.
+/// This can be stored in incremental computation systems like Salsa.
+pub fn parse_watch_file(text: &str) -> Parse<WatchFile> {
+    let parsed = parse(text);
+    Parse::new(parsed.green_node, parsed.errors)
 }
 
 impl Version {
@@ -496,7 +544,7 @@ impl Entry {
     /// opts argument when the matching-pattern is HEAD or heads/branch for git mode.
     pub fn date(&self) -> String {
         self.get_option("date")
-            .unwrap_or_else(|| "%Y%m%d".to_string())
+            .unwrap_or_else(|| "%Y%m%d".into())
     }
 
     /// Return the git export mode
@@ -676,7 +724,7 @@ impl Entry {
     }
 
     /// Returns the version policy
-    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, String> {
+    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, crate::types::ParseError> {
         self.items().nth(2).map(|it| it.parse()).transpose()
     }
 
@@ -722,22 +770,20 @@ pub fn subst(text: &str, package: impl FnOnce() -> String) -> String {
         return text.to_string();
     }
 
-    let mut result = text.to_string();
-
-    // Apply substitutions from SUBSTITUTIONS
-    for (pattern, replacement) in SUBSTITUTIONS {
-        if result.contains(pattern) {
-            result = result.replace(pattern, replacement);
-        }
-    }
+    // Apply all substitutions in a single pass using fold
+    let result = SUBSTITUTIONS
+        .iter()
+        .fold(text.to_string(), |acc, (pattern, replacement)| {
+            acc.replace(pattern, replacement)
+        });
 
     // Handle @PACKAGE@ substitution if needed
     if result.contains("@PACKAGE@") {
         let package_name = package();
-        result = result.replace("@PACKAGE@", &package_name);
+        result.replace("@PACKAGE@", &package_name)
+    } else {
+        result
     }
-
-    result
 }
 
 #[test]
@@ -759,12 +805,14 @@ impl OptionList {
     }
 
     pub fn get_option(&self, key: &str) -> Option<String> {
-        for child in self.children() {
-            if child.key().as_deref() == Some(key) {
-                return child.value();
-            }
-        }
-        None
+        self.children()
+            .find_map(|child| {
+                if child.key().as_deref() == Some(key) {
+                    child.value()
+                } else {
+                    None
+                }
+            })
     }
 }
 
@@ -924,6 +972,41 @@ https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
             .parse()
             .unwrap()
     );
+}
+
+#[test]
+fn test_thread_safe_parsing() {
+    let text = r#"version=4
+https://github.com/example/example/tags example-(.*)\.tar\.gz
+"#;
+    
+    let parsed = parse_watch_file(text);
+    assert!(parsed.is_ok());
+    assert_eq!(parsed.errors().len(), 0);
+    
+    // Test that we can get the AST from the parse result
+    let watchfile = parsed.tree();
+    assert_eq!(watchfile.version(), 4);
+    let entries: Vec<_> = watchfile.entries().collect();
+    assert_eq!(entries.len(), 1);
+}
+
+#[test]
+fn test_parse_clone_and_eq() {
+    let text = r#"version=4
+https://github.com/example/example/tags example-(.*)\.tar\.gz
+"#;
+    
+    let parsed1 = parse_watch_file(text);
+    let parsed2 = parsed1.clone();
+    
+    // Test that cloned parse results are equal
+    assert_eq!(parsed1, parsed2);
+    
+    // Test that the AST nodes are also cloneable
+    let watchfile1 = parsed1.tree();
+    let watchfile2 = watchfile1.clone();
+    assert_eq!(watchfile1, watchfile2);
 }
 
 #[test]

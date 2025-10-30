@@ -412,11 +412,10 @@ impl std::str::FromStr for VersionPolicy {
             s if s.starts_with("version-") => {
                 let v = s.trim_start_matches("version-");
                 Ok(VersionPolicy::Version(
-                    v.parse::<debversion::Version>()
-                        .map_err(|_| ParseError {
-                            type_name: "VersionPolicy",
-                            value: s.to_string(),
-                        })?,
+                    v.parse::<debversion::Version>().map_err(|_| ParseError {
+                        type_name: "VersionPolicy",
+                        value: s.to_string(),
+                    })?,
                 ))
             }
             _ => Err(ParseError {

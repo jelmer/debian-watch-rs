@@ -70,7 +70,7 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
 
 pub use crate::parse::Entry;
 pub use crate::parse::WatchFile;
-pub use crate::parse::{Parse, parse_watch_file};
+pub use crate::parse::{parse_watch_file, Parse};
 
 #[cfg(test)]
 mod tests {

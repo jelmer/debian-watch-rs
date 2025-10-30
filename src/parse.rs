@@ -3,8 +3,8 @@ use crate::types::*;
 use crate::SyntaxKind;
 use crate::SyntaxKind::*;
 use crate::DEFAULT_VERSION;
-use std::str::FromStr;
 use std::marker::PhantomData;
+use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParseError(Vec<String>);
@@ -543,8 +543,7 @@ impl Entry {
     /// Set the date string used by the pretty option to an arbitrary format as an optional
     /// opts argument when the matching-pattern is HEAD or heads/branch for git mode.
     pub fn date(&self) -> String {
-        self.get_option("date")
-            .unwrap_or_else(|| "%Y%m%d".into())
+        self.get_option("date").unwrap_or_else(|| "%Y%m%d".into())
     }
 
     /// Return the git export mode
@@ -805,14 +804,13 @@ impl OptionList {
     }
 
     pub fn get_option(&self, key: &str) -> Option<String> {
-        self.children()
-            .find_map(|child| {
-                if child.key().as_deref() == Some(key) {
-                    child.value()
-                } else {
-                    None
-                }
-            })
+        self.children().find_map(|child| {
+            if child.key().as_deref() == Some(key) {
+                child.value()
+            } else {
+                None
+            }
+        })
     }
 }
 
@@ -979,11 +977,11 @@ fn test_thread_safe_parsing() {
     let text = r#"version=4
 https://github.com/example/example/tags example-(.*)\.tar\.gz
 "#;
-    
+
     let parsed = parse_watch_file(text);
     assert!(parsed.is_ok());
     assert_eq!(parsed.errors().len(), 0);
-    
+
     // Test that we can get the AST from the parse result
     let watchfile = parsed.tree();
     assert_eq!(watchfile.version(), 4);
@@ -996,13 +994,13 @@ fn test_parse_clone_and_eq() {
     let text = r#"version=4
 https://github.com/example/example/tags example-(.*)\.tar\.gz
 "#;
-    
+
     let parsed1 = parse_watch_file(text);
     let parsed2 = parsed1.clone();
-    
+
     // Test that cloned parse results are equal
     assert_eq!(parsed1, parsed2);
-    
+
     // Test that the AST nodes are also cloneable
     let watchfile1 = parsed1.tree();
     let watchfile2 = watchfile1.clone();

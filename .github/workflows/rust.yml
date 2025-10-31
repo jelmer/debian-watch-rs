@@ -30,6 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Install cargo-minimal-versions
-        run: cargo install cargo-minimal-versions
+        run: cargo install cargo-minimal-versions cargo-hack
       - name: Test with minimal versions
         run: cargo minimal-versions test --verbose

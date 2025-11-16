@@ -73,7 +73,7 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
-pub use crate::convert::convert_to_v5;
+pub use crate::convert::{convert_to_v5, ConversionError};
 pub use crate::parse::Entry;
 pub use crate::parse::WatchFile;
 pub use crate::parse::{parse_watch_file, Parse};

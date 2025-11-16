@@ -58,7 +58,7 @@ pub struct Parse<T> {
 
 impl<T> Parse<T> {
     /// Create a new parse result
-    fn new(green: GreenNode, errors: Vec<String>) -> Self {
+    pub(crate) fn new(green: GreenNode, errors: Vec<String>) -> Self {
         Parse {
             green,
             errors,

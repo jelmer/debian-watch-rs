@@ -33,9 +33,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7704b5fdd17b18ae31c4c1da5a2e0305a2bf17b5249300a9ee9ed7b72114c636"
 
 [[package]]
+name = "deb822-lossless"
+version = "0.1.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a3282376f8ff540293a247cc4b875d00c95de27ac8049e8e388bc5752659af7"
+dependencies = [
+ "regex",
+ "rowan",
+ "serde",
+]
+
+[[package]]
 name = "debian-watch"
 version = "0.2.8"
 dependencies = [
+ "deb822-lossless",
  "debversion",
  "m_lexer",
  "maplit",

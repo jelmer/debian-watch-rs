@@ -10,6 +10,7 @@ pub struct WatchFileV5(Deb822);
 /// An entry in a format 5 watch file
 pub struct EntryV5 {
     paragraph: Paragraph,
+    defaults: Option<Paragraph>,
 }
 
 impl WatchFileV5 {
@@ -25,10 +26,26 @@ impl WatchFileV5 {
         5
     }
 
+    /// Returns the defaults paragraph if it exists.
+    /// The defaults paragraph is the second paragraph (after Version) if it has no Source field.
+    pub fn defaults(&self) -> Option<Paragraph> {
+        let paragraphs: Vec<_> = self.0.paragraphs().collect();
+
+        if paragraphs.len() > 1 {
+            // Check if second paragraph looks like defaults (no Source field)
+            if !paragraphs[1].contains_key("Source") && !paragraphs[1].contains_key("source") {
+                return Some(paragraphs[1].clone());
+            }
+        }
+
+        None
+    }
+
     /// Returns an iterator over all entries in the watch file.
     /// The first paragraph contains defaults, subsequent paragraphs are entries.
     pub fn entries(&self) -> impl Iterator<Item = EntryV5> + '_ {
         let paragraphs: Vec<_> = self.0.paragraphs().collect();
+        let defaults = self.defaults();
 
         // Skip the first paragraph (version)
         // The second paragraph (if it exists and has specific fields) contains defaults
@@ -47,7 +64,10 @@ impl WatchFileV5 {
         paragraphs
             .into_iter()
             .skip(start_index)
-            .map(|p| EntryV5 { paragraph: p })
+            .map(move |p| EntryV5 {
+                paragraph: p,
+                defaults: defaults.clone(),
+            })
     }
 
     /// Get the underlying Deb822 object
@@ -99,15 +119,15 @@ impl std::fmt::Display for WatchFileV5 {
 }
 
 impl EntryV5 {
-    /// Get a field value from the entry
-    /// TODO: Support defaults from the first paragraph
+    /// Get a field value from the entry, with fallback to defaults paragraph.
+    /// First checks the entry's own fields, then falls back to the defaults paragraph if present.
     pub(crate) fn get_field(&self, key: &str) -> Option<String> {
-        // Try the key as-is first
+        // Try the key as-is first in the entry
         if let Some(value) = self.paragraph.get(key) {
             return Some(value);
         }
 
-        // If not found, try with different case variations
+        // If not found, try with different case variations in the entry
         // deb822-lossless is case-preserving, so we need to check all field names
         let normalized_key = normalize_key(key);
 
@@ -115,6 +135,21 @@ impl EntryV5 {
         for (k, v) in self.paragraph.items() {
             if normalize_key(&k) == normalized_key {
                 return Some(v);
+            }
+        }
+
+        // If not found in entry, check the defaults paragraph
+        if let Some(ref defaults) = self.defaults {
+            // Try the key as-is first in defaults
+            if let Some(value) = defaults.get(key) {
+                return Some(value);
+            }
+
+            // Try with case variations in defaults
+            for (k, v) in defaults.items() {
+                if normalize_key(&k) == normalized_key {
+                    return Some(v);
+                }
             }
         }
 
@@ -310,5 +345,90 @@ Matching-Pattern: .*\.tar\.gz
         assert_eq!(normalize_key("matching_pattern"), "matchingpattern");
         assert_eq!(normalize_key("MatchingPattern"), "matchingpattern");
         assert_eq!(normalize_key("MATCHING-PATTERN"), "matchingpattern");
+    }
+
+    #[test]
+    fn test_defaults_paragraph() {
+        let input = r#"Version: 5
+
+Compression: xz
+User-Agent: Custom/1.0
+
+Source: https://example.com/repo1
+Matching-Pattern: .*\.tar\.gz
+
+Source: https://example.com/repo2
+Matching-Pattern: .*\.tar\.gz
+Compression: gz
+"#;
+
+        let wf: WatchFileV5 = input.parse().unwrap();
+
+        // Check that defaults paragraph is detected
+        let defaults = wf.defaults();
+        assert!(defaults.is_some());
+        let defaults = defaults.unwrap();
+        assert_eq!(defaults.get("Compression"), Some("xz".to_string()));
+        assert_eq!(defaults.get("User-Agent"), Some("Custom/1.0".to_string()));
+
+        // Check that entries inherit from defaults
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 2);
+
+        // First entry should inherit Compression and User-Agent from defaults
+        assert_eq!(entries[0].get_option("Compression"), Some("xz".to_string()));
+        assert_eq!(
+            entries[0].get_option("User-Agent"),
+            Some("Custom/1.0".to_string())
+        );
+
+        // Second entry overrides Compression but inherits User-Agent
+        assert_eq!(entries[1].get_option("Compression"), Some("gz".to_string()));
+        assert_eq!(
+            entries[1].get_option("User-Agent"),
+            Some("Custom/1.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_no_defaults_paragraph() {
+        let input = r#"Version: 5
+
+Source: https://example.com/repo1
+Matching-Pattern: .*\.tar\.gz
+"#;
+
+        let wf: WatchFileV5 = input.parse().unwrap();
+
+        // Check that there's no defaults paragraph (first paragraph has Source)
+        assert!(wf.defaults().is_none());
+
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn test_defaults_with_case_variations() {
+        let input = r#"Version: 5
+
+compression: xz
+user-agent: Custom/1.0
+
+Source: https://example.com/repo1
+Matching-Pattern: .*\.tar\.gz
+"#;
+
+        let wf: WatchFileV5 = input.parse().unwrap();
+
+        // Check that defaults work with different case
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        // Should find defaults even with different case
+        assert_eq!(entries[0].get_option("Compression"), Some("xz".to_string()));
+        assert_eq!(
+            entries[0].get_option("User-Agent"),
+            Some("Custom/1.0".to_string())
+        );
     }
 }

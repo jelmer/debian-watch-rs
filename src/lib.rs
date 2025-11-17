@@ -27,6 +27,8 @@
 
 mod lex;
 mod parse;
+mod parse_v5;
+mod types_v5;
 
 /// Any watch files without a version are assumed to be
 /// version 1.
@@ -73,6 +75,7 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
 pub use crate::parse::Entry;
 pub use crate::parse::WatchFile;
 pub use crate::parse::{parse_watch_file, Parse};
+pub use crate::parse_v5::{EntryV5, WatchFileV5};
 
 #[cfg(test)]
 mod tests {

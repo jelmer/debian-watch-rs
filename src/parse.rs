@@ -1094,3 +1094,47 @@ opts="bare, filenamemangle=blah" \
 
     assert_eq!(node.text(), WATCHV1);
 }
+
+// Trait implementations for formats 1-4
+
+impl crate::traits::WatchFileFormat for WatchFile {
+    type Entry = Entry;
+
+    fn version(&self) -> u32 {
+        self.version()
+    }
+
+    fn entries(&self) -> Box<dyn Iterator<Item = Self::Entry> + '_> {
+        Box::new(WatchFile::entries(self))
+    }
+
+    fn to_string(&self) -> String {
+        ToString::to_string(self)
+    }
+}
+
+impl crate::traits::WatchEntry for Entry {
+    fn url(&self) -> String {
+        Entry::url(self)
+    }
+
+    fn matching_pattern(&self) -> Option<String> {
+        Entry::matching_pattern(self)
+    }
+
+    fn version_policy(&self) -> Result<Option<crate::VersionPolicy>, crate::types::ParseError> {
+        Entry::version(self)
+    }
+
+    fn script(&self) -> Option<String> {
+        Entry::script(self)
+    }
+
+    fn get_option(&self, key: &str) -> Option<String> {
+        Entry::get_option(self, key)
+    }
+
+    fn has_option(&self, key: &str) -> bool {
+        Entry::has_option(self, key)
+    }
+}

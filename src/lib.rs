@@ -32,8 +32,10 @@ mod parse;
 /// version 1.
 pub const DEFAULT_VERSION: u32 = 1;
 
+mod traits;
 mod types;
 
+pub use traits::*;
 pub use types::*;
 
 /// Let's start with defining all kinds of tokens and

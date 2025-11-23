@@ -323,7 +323,7 @@ type SyntaxElement = rowan::NodeOrToken<SyntaxNode, SyntaxToken>;
 
 impl Parse {
     fn syntax(&self) -> SyntaxNode {
-        SyntaxNode::new_root(self.green_node.clone())
+        SyntaxNode::new_root_mut(self.green_node.clone())
     }
 
     fn root(&self) -> WatchFile {

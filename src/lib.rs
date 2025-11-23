@@ -103,4 +103,23 @@ mod tests {
         assert_eq!(wf.version(), 4);
         assert_eq!("version=4\n", wf.to_string());
     }
+
+    #[test]
+    fn test_set_version_on_parsed() {
+        // Test that parsed WatchFiles can be mutated
+        let mut wf: super::WatchFile = "version=4\n".parse().unwrap();
+        assert_eq!(wf.version(), 4);
+
+        wf.set_version(5);
+        assert_eq!(wf.version(), 5);
+        assert_eq!("version=5\n", wf.to_string());
+
+        // Test setting version on a parsed file without version
+        let mut wf: super::WatchFile = "".parse().unwrap();
+        assert_eq!(wf.version(), super::DEFAULT_VERSION);
+
+        wf.set_version(4);
+        assert_eq!(wf.version(), 4);
+        assert_eq!("version=4\n", wf.to_string());
+    }
 }

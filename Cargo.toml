@@ -11,8 +11,8 @@ homepage = "https://github.com/jelmer/debian-watch-rs"
 [dependencies]
 rowan = "0.16"
 m_lexer = "0.0.4"
-debversion = ">=0.3"
-url = "2.5.3"
+debversion = ">=0.4.7, <0.6"
+url = "2.5.7"
 
 [dev-dependencies]
 maplit = "1.0.2"

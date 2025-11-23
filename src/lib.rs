@@ -93,4 +93,22 @@ mod tests {
 
         assert_eq!("version=4\n", wf.to_string());
     }
+
+    #[test]
+    fn test_set_version() {
+        let mut wf = super::WatchFile::new(Some(4));
+        assert_eq!(wf.version(), 4);
+
+        wf.set_version(5);
+        assert_eq!(wf.version(), 5);
+        assert_eq!("version=5\n", wf.to_string());
+
+        // Test setting version on a file without version
+        let mut wf = super::WatchFile::new(None);
+        assert_eq!(wf.version(), super::DEFAULT_VERSION);
+
+        wf.set_version(4);
+        assert_eq!(wf.version(), 4);
+        assert_eq!("version=4\n", wf.to_string());
+    }
 }

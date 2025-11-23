@@ -435,7 +435,7 @@ impl WatchFile {
             builder.finish_node();
         }
         builder.finish_node();
-        WatchFile(SyntaxNode::new_root(builder.finish()))
+        WatchFile(SyntaxNode::new_root_mut(builder.finish()))
     }
 
     /// Returns the version of the watch file.
@@ -450,6 +450,34 @@ impl WatchFile {
     /// Returns an iterator over all entries in the watch file.
     pub fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
         self.0.children().filter_map(Entry::cast)
+    }
+
+    /// Set the version of the watch file.
+    pub fn set_version(&mut self, new_version: u32) {
+        // Build the new version node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(VERSION.into());
+        builder.token(KEY.into(), "version");
+        builder.token(EQUALS.into(), "=");
+        builder.token(VALUE.into(), new_version.to_string().as_str());
+        builder.token(NEWLINE.into(), "\n");
+        builder.finish_node();
+        let new_version_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_version_node = SyntaxNode::new_root_mut(new_version_green);
+
+        // Find existing version node if any
+        let version_pos = self.0.children().position(|child| child.kind() == VERSION);
+
+        if let Some(pos) = version_pos {
+            // Replace existing version node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_version_node.into()]);
+        } else {
+            // Insert version node at the beginning
+            self.0.splice_children(0..0, vec![new_version_node.into()]);
+        }
     }
 }
 

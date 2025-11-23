@@ -25,6 +25,7 @@
 //! assert_eq!(entry.matching_pattern().as_deref(), Some(".*/v?(\\d\\S+)\\.tar\\.gz"));
 //! ```
 
+mod convert;
 mod lex;
 mod parse;
 mod parse_v5;
@@ -72,6 +73,7 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
+pub use crate::convert::{convert_to_v5, ConversionError};
 pub use crate::parse::Entry;
 pub use crate::parse::WatchFile;
 pub use crate::parse::{parse_watch_file, Parse};

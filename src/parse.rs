@@ -24,7 +24,7 @@ impl std::error::Error for ParseError {}
 /// these two SyntaxKind types, allowing for a nicer SyntaxNode API where
 /// "kinds" are values from our `enum SyntaxKind`, instead of plain u16 values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-enum Lang {}
+pub(crate) enum Lang {}
 impl rowan::Language for Lang {
     type Kind = SyntaxKind;
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
@@ -305,6 +305,14 @@ fn parse(text: &str) -> InternalParse {
         fn parse(mut self) -> InternalParse {
             // Make sure that the root node covers all source
             self.builder.start_node(ROOT.into());
+            // Skip any leading comments/whitespace/newlines before version
+            while self.current() == Some(WHITESPACE)
+                || self.current() == Some(CONTINUATION)
+                || self.current() == Some(COMMENT)
+                || self.current() == Some(NEWLINE)
+            {
+                self.bump();
+            }
             if let Some(_v) = self.parse_version() {
                 // Version is stored in the syntax tree, no need to track separately
             }
@@ -408,6 +416,11 @@ ast_node!(OptionList, OPTS_LIST);
 ast_node!(_Option, OPTION);
 
 impl WatchFile {
+    /// Access the underlying syntax node (needed for conversion)
+    pub(crate) fn syntax(&self) -> &SyntaxNode {
+        &self.0
+    }
+
     /// Create a new watch file with specified version
     pub fn new(version: Option<u32>) -> WatchFile {
         let mut builder = GreenNodeBuilder::new();
@@ -480,6 +493,11 @@ impl Version {
 }
 
 impl Entry {
+    /// Access the underlying syntax node (needed for conversion)
+    pub(crate) fn syntax(&self) -> &SyntaxNode {
+        &self.0
+    }
+
     /// List of options
     pub fn option_list(&self) -> Option<OptionList> {
         self.0.children().find_map(OptionList::cast)
@@ -807,6 +825,17 @@ impl OptionList {
         self.children().find_map(|child| {
             if child.key().as_deref() == Some(key) {
                 child.value()
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Returns an iterator over all options as (key, value) pairs
+    pub(crate) fn options(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.children().filter_map(|opt| {
+            if let (Some(key), Some(value)) = (opt.key(), opt.value()) {
+                Some((key, value))
             } else {
                 None
             }

@@ -85,7 +85,7 @@ impl<T> Parse<T> {
 impl Parse<WatchFile> {
     /// Get the root WatchFile node
     pub fn tree(&self) -> WatchFile {
-        WatchFile::cast(SyntaxNode::new_root(self.green.clone()))
+        WatchFile::cast(SyntaxNode::new_root_mut(self.green.clone()))
             .expect("root node should be a WatchFile")
     }
 }
@@ -194,7 +194,36 @@ fn parse(text: &str) -> InternalParse {
                     }
                     self.builder.finish_node();
                 } else {
-                    self.bump();
+                    // Wrap each field in its appropriate node
+                    match i {
+                        0 => {
+                            // URL
+                            self.builder.start_node(URL.into());
+                            self.bump();
+                            self.builder.finish_node();
+                        }
+                        1 => {
+                            // Matching pattern
+                            self.builder.start_node(MATCHING_PATTERN.into());
+                            self.bump();
+                            self.builder.finish_node();
+                        }
+                        2 => {
+                            // Version policy
+                            self.builder.start_node(VERSION_POLICY.into());
+                            self.bump();
+                            self.builder.finish_node();
+                        }
+                        3 => {
+                            // Script
+                            self.builder.start_node(SCRIPT.into());
+                            self.bump();
+                            self.builder.finish_node();
+                        }
+                        _ => {
+                            self.bump();
+                        }
+                    }
                 }
                 self.skip_ws();
             }
@@ -376,7 +405,7 @@ type SyntaxElement = rowan::NodeOrToken<SyntaxNode, SyntaxToken>;
 
 impl InternalParse {
     fn syntax(&self) -> SyntaxNode {
-        SyntaxNode::new_root(self.green_node.clone())
+        SyntaxNode::new_root_mut(self.green_node.clone())
     }
 
     fn root(&self) -> WatchFile {
@@ -414,6 +443,10 @@ ast_node!(Version, VERSION);
 ast_node!(Entry, ENTRY);
 ast_node!(OptionList, OPTS_LIST);
 ast_node!(_Option, OPTION);
+ast_node!(Url, URL);
+ast_node!(MatchingPattern, MATCHING_PATTERN);
+ast_node!(VersionPolicyNode, VERSION_POLICY);
+ast_node!(ScriptNode, SCRIPT);
 
 impl WatchFile {
     /// Access the underlying syntax node (needed for conversion)
@@ -754,28 +787,66 @@ impl Entry {
                     None
                 }
             }
-            _ => None,
+            SyntaxElement::Node(node) => {
+                // Extract values from entry field nodes
+                match node.kind() {
+                    URL => Url::cast(node).map(|n| n.url()),
+                    MATCHING_PATTERN => MatchingPattern::cast(node).map(|n| n.pattern()),
+                    VERSION_POLICY => VersionPolicyNode::cast(node).map(|n| n.policy()),
+                    SCRIPT => ScriptNode::cast(node).map(|n| n.script()),
+                    _ => None,
+                }
+            }
         })
     }
 
     /// Returns the URL of the entry.
     pub fn url(&self) -> String {
-        self.items().next().unwrap_or_default()
+        self.0
+            .children()
+            .find_map(Url::cast)
+            .map(|it| it.url())
+            .unwrap_or_else(|| {
+                // Fallback for entries without URL node (shouldn't happen with new parser)
+                self.items().next().unwrap_or_default()
+            })
     }
 
     /// Returns the matching pattern of the entry.
     pub fn matching_pattern(&self) -> Option<String> {
-        self.items().nth(1)
+        self.0
+            .children()
+            .find_map(MatchingPattern::cast)
+            .map(|it| it.pattern())
+            .or_else(|| {
+                // Fallback for entries without MATCHING_PATTERN node
+                self.items().nth(1)
+            })
     }
 
     /// Returns the version policy
     pub fn version(&self) -> Result<Option<crate::VersionPolicy>, crate::types::ParseError> {
-        self.items().nth(2).map(|it| it.parse()).transpose()
+        self.0
+            .children()
+            .find_map(VersionPolicyNode::cast)
+            .map(|it| it.policy().parse())
+            .transpose()
+            .or_else(|_e| {
+                // Fallback for entries without VERSION_POLICY node
+                self.items().nth(2).map(|it| it.parse()).transpose()
+            })
     }
 
     /// Returns the script of the entry.
     pub fn script(&self) -> Option<String> {
-        self.items().nth(3)
+        self.0
+            .children()
+            .find_map(ScriptNode::cast)
+            .map(|it| it.script())
+            .or_else(|| {
+                // Fallback for entries without SCRIPT node
+                self.items().nth(3)
+            })
     }
 
     /// Replace all substitutions and return the resulting URL.
@@ -784,6 +855,121 @@ impl Entry {
         package: impl FnOnce() -> String,
     ) -> Result<url::Url, url::ParseError> {
         subst(self.url().as_str(), package).parse()
+    }
+
+    /// Set the URL of the entry.
+    pub fn set_url(&mut self, new_url: &str) {
+        // Build the new URL node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(URL.into());
+        builder.token(VALUE.into(), new_url);
+        builder.finish_node();
+        let new_url_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_url_node = SyntaxNode::new_root_mut(new_url_green);
+
+        // Find existing URL node position (need to use children_with_tokens for correct indexing)
+        let url_pos = self
+            .0
+            .children_with_tokens()
+            .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == URL));
+
+        if let Some(pos) = url_pos {
+            // Replace existing URL node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_url_node.into()]);
+        }
+    }
+
+    /// Set the matching pattern of the entry.
+    ///
+    /// TODO: This currently only replaces an existing matching pattern.
+    /// If the entry doesn't have a matching pattern, this method does nothing.
+    /// Future implementation should insert the node at the correct position.
+    pub fn set_matching_pattern(&mut self, new_pattern: &str) {
+        // Build the new MATCHING_PATTERN node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(MATCHING_PATTERN.into());
+        builder.token(VALUE.into(), new_pattern);
+        builder.finish_node();
+        let new_pattern_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_pattern_node = SyntaxNode::new_root_mut(new_pattern_green);
+
+        // Find existing MATCHING_PATTERN node position
+        let pattern_pos = self.0.children_with_tokens().position(
+            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == MATCHING_PATTERN),
+        );
+
+        if let Some(pos) = pattern_pos {
+            // Replace existing MATCHING_PATTERN node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_pattern_node.into()]);
+        }
+        // TODO: else insert new node after URL
+    }
+
+    /// Set the version policy of the entry.
+    ///
+    /// TODO: This currently only replaces an existing version policy.
+    /// If the entry doesn't have a version policy, this method does nothing.
+    /// Future implementation should insert the node at the correct position.
+    pub fn set_version_policy(&mut self, new_policy: &str) {
+        // Build the new VERSION_POLICY node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(VERSION_POLICY.into());
+        // Version policy can be KEY (e.g., "debian") or VALUE
+        builder.token(VALUE.into(), new_policy);
+        builder.finish_node();
+        let new_policy_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_policy_node = SyntaxNode::new_root_mut(new_policy_green);
+
+        // Find existing VERSION_POLICY node position
+        let policy_pos = self.0.children_with_tokens().position(
+            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == VERSION_POLICY),
+        );
+
+        if let Some(pos) = policy_pos {
+            // Replace existing VERSION_POLICY node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_policy_node.into()]);
+        }
+        // TODO: else insert new node after MATCHING_PATTERN (or URL if no pattern)
+    }
+
+    /// Set the script of the entry.
+    ///
+    /// TODO: This currently only replaces an existing script.
+    /// If the entry doesn't have a script, this method does nothing.
+    /// Future implementation should insert the node at the correct position.
+    pub fn set_script(&mut self, new_script: &str) {
+        // Build the new SCRIPT node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(SCRIPT.into());
+        // Script can be KEY (e.g., "uupdate") or VALUE
+        builder.token(VALUE.into(), new_script);
+        builder.finish_node();
+        let new_script_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_script_node = SyntaxNode::new_root_mut(new_script_green);
+
+        // Find existing SCRIPT node position
+        let script_pos = self
+            .0
+            .children_with_tokens()
+            .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == SCRIPT));
+
+        if let Some(pos) = script_pos {
+            // Replace existing SCRIPT node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_script_node.into()]);
+        }
+        // TODO: else insert new node after VERSION_POLICY (or MATCHING_PATTERN/URL if no policy)
     }
 }
 
@@ -904,6 +1090,178 @@ impl _Option {
     }
 }
 
+impl Url {
+    /// Returns the URL string.
+    pub fn url(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    if token.kind() == VALUE {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+impl MatchingPattern {
+    /// Returns the matching pattern string.
+    pub fn pattern(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    if token.kind() == VALUE {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+impl VersionPolicyNode {
+    /// Returns the version policy string.
+    pub fn policy(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    // Can be KEY (e.g., "debian") or VALUE
+                    if token.kind() == VALUE || token.kind() == KEY {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+impl ScriptNode {
+    /// Returns the script string.
+    pub fn script(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    // Can be KEY (e.g., "uupdate") or VALUE
+                    if token.kind() == VALUE || token.kind() == KEY {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+#[test]
+fn test_entry_node_structure() {
+    // Test that entries properly use the new node types
+    let wf: super::WatchFile = r#"version=4
+opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let entry = wf.entries().next().unwrap();
+
+    // Verify URL node exists and works
+    assert_eq!(entry.0.children().find(|n| n.kind() == URL).is_some(), true);
+    assert_eq!(entry.url(), "https://example.com/releases");
+
+    // Verify MATCHING_PATTERN node exists and works
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == MATCHING_PATTERN)
+            .is_some(),
+        true
+    );
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+
+    // Verify VERSION_POLICY node exists and works
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == VERSION_POLICY)
+            .is_some(),
+        true
+    );
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+
+    // Verify SCRIPT node exists and works
+    assert_eq!(
+        entry.0.children().find(|n| n.kind() == SCRIPT).is_some(),
+        true
+    );
+    assert_eq!(entry.script(), Some("uupdate".into()));
+}
+
+#[test]
+fn test_entry_node_structure_partial() {
+    // Test entry with only URL and pattern (no version or script)
+    let wf: super::WatchFile = r#"version=4
+https://github.com/example/tags .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let entry = wf.entries().next().unwrap();
+
+    // Should have URL and MATCHING_PATTERN nodes
+    assert_eq!(entry.0.children().find(|n| n.kind() == URL).is_some(), true);
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == MATCHING_PATTERN)
+            .is_some(),
+        true
+    );
+
+    // Should NOT have VERSION_POLICY or SCRIPT nodes
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == VERSION_POLICY)
+            .is_some(),
+        false
+    );
+    assert_eq!(
+        entry.0.children().find(|n| n.kind() == SCRIPT).is_some(),
+        false
+    );
+
+    // Verify accessors work correctly
+    assert_eq!(entry.url(), "https://github.com/example/tags");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.version(), Ok(None));
+    assert_eq!(entry.script(), None);
+}
+
 #[test]
 fn test_parse_v1() {
     const WATCHV1: &str = r#"version=4
@@ -935,9 +1293,11 @@ opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
     WHITESPACE@86..87 " "
     CONTINUATION@87..89 "\\\n"
     WHITESPACE@89..91 "  "
-    VALUE@91..138 "https://github.com/sy ..."
+    URL@91..138
+      VALUE@91..138 "https://github.com/sy ..."
     WHITESPACE@138..139 " "
-    VALUE@139..160 ".*/v?(\\d\\S+)\\.tar\\.gz"
+    MATCHING_PATTERN@139..160
+      VALUE@139..160 ".*/v?(\\d\\S+)\\.tar\\.gz"
     NEWLINE@160..161 "\n"
 "#
     );
@@ -980,9 +1340,11 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
     VALUE@8..9 "4"
     NEWLINE@9..10 "\n"
   ENTRY@10..80
-    VALUE@10..57 "https://github.com/sy ..."
+    URL@10..57
+      VALUE@10..57 "https://github.com/sy ..."
     WHITESPACE@57..58 " "
-    VALUE@58..79 ".*/v?(\\d\\S+)\\.tar\\.gz"
+    MATCHING_PATTERN@58..79
+      VALUE@58..79 ".*/v?(\\d\\S+)\\.tar\\.gz"
     NEWLINE@79..80 "\n"
   COMMENT@80..89 "# comment"
   NEWLINE@89..90 "\n"
@@ -1194,4 +1556,367 @@ impl crate::traits::WatchEntry for Entry {
     fn has_option(&self, key: &str) -> bool {
         Entry::has_option(self, key)
     }
+}
+
+#[test]
+fn test_set_url() {
+    // Test setting URL on a simple entry without options
+    let wf: super::WatchFile = r#"version=4
+https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.url(),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+    );
+
+    entry.set_url("https://newurl.example.org/path");
+    assert_eq!(entry.url(), "https://newurl.example.org/path");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
+    );
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "https://newurl.example.org/path .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_set_url_with_options() {
+    // Test setting URL on an entry with options
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah https://foo.com/bar .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.url(), "https://foo.com/bar");
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+
+    entry.set_url("https://example.com/baz");
+    assert_eq!(entry.url(), "https://example.com/baz");
+
+    // Verify options are preserved
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
+    );
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=blah https://example.com/baz .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_set_url_complex() {
+    // Test with a complex watch file with multiple options and continuation
+    let wf: super::WatchFile = r#"version=4
+opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
+  https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.url(),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+    );
+
+    entry.set_url("https://gitlab.com/newproject/tags");
+    assert_eq!(entry.url(), "https://gitlab.com/newproject/tags");
+
+    // Verify all options are preserved
+    assert!(entry.bare());
+    assert_eq!(
+        entry.filenamemangle(),
+        Some("s/.+\\/v?(\\d\\S+)\\.tar\\.gz/syncthing-gtk-$1\\.tar\\.gz/".into())
+    );
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
+    );
+
+    // Verify the exact serialized output preserves structure
+    assert_eq!(
+        entry.to_string(),
+        r#"opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
+  https://gitlab.com/newproject/tags .*/v?(\d\S+)\.tar\.gz
+"#
+    );
+}
+
+#[test]
+fn test_set_url_with_all_fields() {
+    // Test with all fields: options, URL, matching pattern, version, and script
+    let wf: super::WatchFile = r#"version=4
+opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
+    https://github.com/example/example-cat/tags \
+        (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.url(), "https://github.com/example/example-cat/tags");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+    assert_eq!(entry.script(), Some("uupdate".into()));
+
+    entry.set_url("https://gitlab.example.org/project/releases");
+    assert_eq!(entry.url(), "https://gitlab.example.org/project/releases");
+
+    // Verify all other fields are preserved
+    assert!(entry.repack());
+    assert_eq!(entry.compression(), Ok(Some(super::Compression::Xz)));
+    assert_eq!(entry.dversionmangle(), Some("s/\\+ds//".into()));
+    assert_eq!(entry.repacksuffix(), Some("+ds".into()));
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+    assert_eq!(entry.script(), Some("uupdate".into()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        r#"opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
+    https://gitlab.example.org/project/releases \
+        (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    );
+}
+
+#[test]
+fn test_set_url_quoted_options() {
+    // Test with quoted options
+    let wf: super::WatchFile = r#"version=4
+opts="bare, filenamemangle=blah" \
+  https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.url(),
+        "https://github.com/syncthing/syncthing-gtk/tags"
+    );
+
+    entry.set_url("https://example.org/new/path");
+    assert_eq!(entry.url(), "https://example.org/new/path");
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        r#"opts="bare, filenamemangle=blah" \
+  https://example.org/new/path .*/v?(\d\S+)\.tar\.gz
+"#
+    );
+}
+
+#[test]
+fn test_set_matching_pattern() {
+    // Test setting matching pattern on a simple entry
+    let wf: super::WatchFile = r#"version=4
+https://github.com/example/tags .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
+    );
+
+    entry.set_matching_pattern("(?:.*?/)?v?([\\d.]+)\\.tar\\.gz");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?([\\d.]+)\\.tar\\.gz".into())
+    );
+
+    // Verify URL is preserved
+    assert_eq!(entry.url(), "https://github.com/example/tags");
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "https://github.com/example/tags (?:.*?/)?v?([\\d.]+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_set_matching_pattern_with_all_fields() {
+    // Test with all fields present
+    let wf: super::WatchFile = r#"version=4
+opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+
+    entry.set_matching_pattern(".*/version-([\\d.]+)\\.tar\\.xz");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/version-([\\d.]+)\\.tar\\.xz".into())
+    );
+
+    // Verify all other fields are preserved
+    assert_eq!(entry.url(), "https://example.com/releases");
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+    assert_eq!(entry.script(), Some("uupdate".into()));
+    assert_eq!(entry.compression(), Ok(Some(super::Compression::Xz)));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=compression=xz https://example.com/releases .*/version-([\\d.]+)\\.tar\\.xz debian uupdate\n"
+    );
+}
+
+#[test]
+fn test_set_version_policy() {
+    // Test setting version policy
+    let wf: super::WatchFile = r#"version=4
+https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+
+    entry.set_version_policy("previous");
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Previous)));
+
+    // Verify all other fields are preserved
+    assert_eq!(entry.url(), "https://example.com/releases");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.script(), Some("uupdate".into()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "https://example.com/releases (?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz previous uupdate\n"
+    );
+}
+
+#[test]
+fn test_set_version_policy_with_options() {
+    // Test with options and continuation
+    let wf: super::WatchFile = r#"version=4
+opts=repack,compression=xz \
+    https://github.com/example/example-cat/tags \
+        (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+
+    entry.set_version_policy("ignore");
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Ignore)));
+
+    // Verify all other fields are preserved
+    assert_eq!(entry.url(), "https://github.com/example/example-cat/tags");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.script(), Some("uupdate".into()));
+    assert!(entry.repack());
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        r#"opts=repack,compression=xz \
+    https://github.com/example/example-cat/tags \
+        (?:.*?/)?v?(\d[\d.]*)\.tar\.gz ignore uupdate
+"#
+    );
+}
+
+#[test]
+fn test_set_script() {
+    // Test setting script
+    let wf: super::WatchFile = r#"version=4
+https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.script(), Some("uupdate".into()));
+
+    entry.set_script("uscan");
+    assert_eq!(entry.script(), Some("uscan".into()));
+
+    // Verify all other fields are preserved
+    assert_eq!(entry.url(), "https://example.com/releases");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "https://example.com/releases (?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz debian uscan\n"
+    );
+}
+
+#[test]
+fn test_set_script_with_options() {
+    // Test with options
+    let wf: super::WatchFile = r#"version=4
+opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.script(), Some("uupdate".into()));
+
+    entry.set_script("custom-script.sh");
+    assert_eq!(entry.script(), Some("custom-script.sh".into()));
+
+    // Verify all other fields are preserved
+    assert_eq!(entry.url(), "https://example.com/releases");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+    assert_eq!(entry.compression(), Ok(Some(super::Compression::Xz)));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=compression=xz https://example.com/releases (?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz debian custom-script.sh\n"
+    );
 }

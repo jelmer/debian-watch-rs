@@ -59,11 +59,15 @@ pub(crate) enum SyntaxKind {
     ERROR,      // as well as errors
 
     // composite nodes
-    ROOT,      // The entire file
-    VERSION,   // "version=x\n"
-    ENTRY,     // "opts=foo=blah https://foo.com/bar .*/v?(\d\S+)\.tar\.gz\n"
-    OPTS_LIST, // "opts=foo=blah"
-    OPTION,    // "foo=blah"
+    ROOT,             // The entire file
+    VERSION,          // "version=x\n"
+    ENTRY,            // "opts=foo=blah https://foo.com/bar .*/v?(\d\S+)\.tar\.gz\n"
+    OPTS_LIST,        // "opts=foo=blah"
+    OPTION,           // "foo=blah"
+    URL,              // "https://foo.com/bar"
+    MATCHING_PATTERN, // ".*/v?(\d\S+)\.tar\.gz"
+    VERSION_POLICY,   // "debian"
+    SCRIPT,           // "uupdate"
 }
 
 /// Convert our `SyntaxKind` into the rowan `SyntaxKind`.

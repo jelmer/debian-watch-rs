@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Build
         run: cargo build --verbose
       - name: Run tests
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Install cargo-minimal-versions
         run: cargo install cargo-minimal-versions cargo-hack
       - name: Test with minimal versions

@@ -29,6 +29,7 @@ mod lex;
 mod parse;
 
 pub mod mangle;
+pub mod release;
 
 /// Any watch files without a version are assumed to be
 /// version 1.
@@ -36,6 +37,7 @@ pub const DEFAULT_VERSION: u32 = 1;
 
 mod types;
 
+pub use release::Release;
 pub use types::*;
 
 /// Let's start with defining all kinds of tokens and

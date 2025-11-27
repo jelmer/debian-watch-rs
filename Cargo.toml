@@ -13,6 +13,7 @@ rowan = "0.16.1"
 m_lexer = "0.0.4"
 debversion = ">=0.4.7, <0.6"
 url = "2.5.7"
+regex = "1"
 
 [dev-dependencies]
 maplit = "1.0.2"

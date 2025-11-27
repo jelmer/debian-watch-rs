@@ -28,6 +28,8 @@
 mod lex;
 mod parse;
 
+pub mod mangle;
+
 /// Any watch files without a version are assumed to be
 /// version 1.
 pub const DEFAULT_VERSION: u32 = 1;

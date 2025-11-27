@@ -274,7 +274,9 @@ fn parse(text: &str) -> Parse {
                         break;
                     }
                     if self.current() == Some(COMMA) {
+                        self.builder.start_node(OPTION_SEPARATOR.into());
                         self.bump();
+                        self.builder.finish_node();
                     } else if !quoted {
                         break;
                     }
@@ -899,6 +901,105 @@ impl Entry {
         }
         // TODO: else insert new node after VERSION_POLICY (or MATCHING_PATTERN/URL if no policy)
     }
+
+    /// Set or update an option value.
+    ///
+    /// If the option already exists, it will be updated with the new value.
+    /// If the option doesn't exist, it will be added to the options list.
+    /// If there's no options list, one will be created.
+    pub fn set_opt(&mut self, key: &str, value: &str) {
+        // Find the OPTS_LIST position in Entry
+        let opts_pos = self.0.children_with_tokens().position(
+            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == OPTS_LIST),
+        );
+
+        if let Some(_opts_idx) = opts_pos {
+            if let Some(mut ol) = self.option_list() {
+                // Find if the option already exists
+                if let Some(mut opt) = ol.find_option(key) {
+                    // Update the existing option's value
+                    opt.set_value(value);
+                    // Mutations should propagate automatically - no need to replace
+                } else {
+                    // Add new option
+                    ol.add_option(key, value);
+                    // Mutations should propagate automatically - no need to replace
+                }
+            }
+        } else {
+            // Create a new options list
+            let mut builder = GreenNodeBuilder::new();
+            builder.start_node(OPTS_LIST.into());
+            builder.token(KEY.into(), "opts");
+            builder.token(EQUALS.into(), "=");
+            builder.start_node(OPTION.into());
+            builder.token(KEY.into(), key);
+            builder.token(EQUALS.into(), "=");
+            builder.token(VALUE.into(), value);
+            builder.finish_node();
+            builder.finish_node();
+            let new_opts_green = builder.finish();
+            let new_opts_node = SyntaxNode::new_root_mut(new_opts_green);
+
+            // Find position to insert (before URL if it exists, otherwise at start)
+            let url_pos = self
+                .0
+                .children_with_tokens()
+                .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == URL));
+
+            if let Some(url_idx) = url_pos {
+                // Insert options list and a space before the URL
+                // Build a parent node containing both space and whitespace to extract from
+                let mut combined_builder = GreenNodeBuilder::new();
+                combined_builder.start_node(ROOT.into()); // Temporary parent
+                combined_builder.token(WHITESPACE.into(), " ");
+                combined_builder.finish_node();
+                let temp_green = combined_builder.finish();
+                let temp_root = SyntaxNode::new_root_mut(temp_green);
+                let space_element = temp_root.children_with_tokens().next().unwrap();
+
+                self.0
+                    .splice_children(url_idx..url_idx, vec![new_opts_node.into(), space_element]);
+            } else {
+                self.0.splice_children(0..0, vec![new_opts_node.into()]);
+            }
+        }
+    }
+
+    /// Delete an option.
+    ///
+    /// Removes the option with the specified key from the options list.
+    /// If the option doesn't exist, this method does nothing.
+    /// If deleting the option results in an empty options list, the entire
+    /// opts= declaration is removed.
+    pub fn del_opt(&mut self, key: &str) {
+        if let Some(mut ol) = self.option_list() {
+            let option_count = ol.0.children().filter(|n| n.kind() == OPTION).count();
+
+            if option_count == 1 && ol.has_option(key) {
+                // This is the last option, remove the entire OPTS_LIST from Entry
+                let opts_pos = self.0.children().position(|node| node.kind() == OPTS_LIST);
+
+                if let Some(opts_idx) = opts_pos {
+                    // Remove the OPTS_LIST
+                    self.0.splice_children(opts_idx..opts_idx + 1, vec![]);
+
+                    // Remove any leading whitespace/continuation that was after the OPTS_LIST
+                    while self.0.children_with_tokens().next().map_or(false, |e| {
+                        matches!(
+                            e,
+                            SyntaxElement::Token(t) if t.kind() == WHITESPACE || t.kind() == CONTINUATION
+                        )
+                    }) {
+                        self.0.splice_children(0..1, vec![]);
+                    }
+                }
+            } else {
+                // Defer to OptionList to remove the option
+                ol.remove_option(key);
+            }
+        }
+    }
 }
 
 const SUBSTITUTIONS: &[(&str, &str)] = &[
@@ -949,6 +1050,14 @@ fn test_subst() {
     assert_eq!(subst("@PACKAGE@", || "dulwich".to_string()), "dulwich");
 }
 
+impl std::fmt::Debug for OptionList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OptionList")
+            .field("text", &self.0.text().to_string())
+            .finish()
+    }
+}
+
 impl OptionList {
     fn children(&self) -> impl Iterator<Item = _Option> + '_ {
         self.0.children().filter_map(_Option::cast)
@@ -965,6 +1074,53 @@ impl OptionList {
             }
         }
         None
+    }
+
+    /// Find an option by key.
+    fn find_option(&self, key: &str) -> Option<_Option> {
+        self.children()
+            .find(|opt| opt.key().as_deref() == Some(key))
+    }
+
+    /// Add a new option to the end of the options list.
+    fn add_option(&mut self, key: &str, value: &str) {
+        let option_count = self.0.children().filter(|n| n.kind() == OPTION).count();
+
+        // Build a structure containing separator (if needed) + option wrapped in a temporary parent
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(ROOT.into()); // Temporary parent
+
+        if option_count > 0 {
+            builder.start_node(OPTION_SEPARATOR.into());
+            builder.token(COMMA.into(), ",");
+            builder.finish_node();
+        }
+
+        builder.start_node(OPTION.into());
+        builder.token(KEY.into(), key);
+        builder.token(EQUALS.into(), "=");
+        builder.token(VALUE.into(), value);
+        builder.finish_node();
+
+        builder.finish_node(); // Close temporary parent
+        let combined_green = builder.finish();
+
+        // Create a temporary root to extract children from
+        let temp_root = SyntaxNode::new_root_mut(combined_green);
+        let new_children: Vec<_> = temp_root.children_with_tokens().collect();
+
+        let insert_pos = self.0.children_with_tokens().count();
+        self.0.splice_children(insert_pos..insert_pos, new_children);
+    }
+
+    /// Remove an option by key. Returns true if an option was removed.
+    fn remove_option(&mut self, key: &str) -> bool {
+        if let Some(mut opt) = self.find_option(key) {
+            opt.remove();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -998,6 +1154,50 @@ impl _Option {
                 _ => None,
             })
             .nth(1)
+    }
+
+    /// Set the value of the option.
+    pub fn set_value(&mut self, new_value: &str) {
+        let key = self.key().expect("Option must have a key");
+
+        // Build a new OPTION node with the updated value
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(OPTION.into());
+        builder.token(KEY.into(), &key);
+        builder.token(EQUALS.into(), "=");
+        builder.token(VALUE.into(), new_value);
+        builder.finish_node();
+        let new_option_green = builder.finish();
+        let new_option_node = SyntaxNode::new_root_mut(new_option_green);
+
+        // Replace this option in the parent OptionList
+        if let Some(parent) = self.0.parent() {
+            let idx = self.0.index();
+            parent.splice_children(idx..idx + 1, vec![new_option_node.into()]);
+        }
+    }
+
+    /// Remove this option and its associated separator from the parent OptionList.
+    pub fn remove(&mut self) {
+        // Find adjacent separator to remove before detaching this node
+        let next_sep = self
+            .0
+            .next_sibling()
+            .filter(|n| n.kind() == OPTION_SEPARATOR);
+        let prev_sep = self
+            .0
+            .prev_sibling()
+            .filter(|n| n.kind() == OPTION_SEPARATOR);
+
+        // Detach separator first if it exists
+        if let Some(sep) = next_sep {
+            sep.detach();
+        } else if let Some(sep) = prev_sep {
+            sep.detach();
+        }
+
+        // Now detach the option itself
+        self.0.detach();
     }
 }
 
@@ -1196,7 +1396,8 @@ opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
       EQUALS@14..15 "="
       OPTION@15..19
         KEY@15..19 "bare"
-      COMMA@19..20 ","
+      OPTION_SEPARATOR@19..20
+        COMMA@19..20 ","
       OPTION@20..86
         KEY@20..34 "filenamemangle"
         EQUALS@34..35 "="
@@ -1558,6 +1759,205 @@ opts="bare, filenamemangle=blah" \
         r#"opts="bare, filenamemangle=blah" \
   https://example.org/new/path .*/v?(\d\S+)\.tar\.gz
 "#
+    );
+}
+
+#[test]
+fn test_set_opt_update_existing() {
+    // Test updating an existing option
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    entry.set_opt("foo", "updated");
+    assert_eq!(entry.get_option("foo"), Some("updated".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=updated,bar=baz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_set_opt_add_new() {
+    // Test adding a new option to existing options
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), None);
+
+    entry.set_opt("bar", "baz");
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=blah,bar=baz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_set_opt_create_options_list() {
+    // Test creating a new options list when none exists
+    let wf: super::WatchFile = r#"version=4
+https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.option_list(), None);
+
+    entry.set_opt("compression", "xz");
+    assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=compression=xz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_single() {
+    // Test removing a single option from multiple options
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz,qux=quux https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+    assert_eq!(entry.get_option("qux"), Some("quux".to_string()));
+
+    entry.del_opt("bar");
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), None);
+    assert_eq!(entry.get_option("qux"), Some("quux".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=blah,qux=quux https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_first() {
+    // Test removing the first option
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    entry.del_opt("foo");
+    assert_eq!(entry.get_option("foo"), None);
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=bar=baz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_last() {
+    // Test removing the last option
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    entry.del_opt("bar");
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), None);
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=blah https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_only_option() {
+    // Test removing the only option (should remove entire opts list)
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+
+    entry.del_opt("foo");
+    assert_eq!(entry.get_option("foo"), None);
+    assert_eq!(entry.option_list(), None);
+
+    // Verify the exact serialized output (opts should be gone)
+    assert_eq!(
+        entry.to_string(),
+        "https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_nonexistent() {
+    // Test deleting a non-existent option (should do nothing)
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    let original = entry.to_string();
+
+    entry.del_opt("nonexistent");
+    assert_eq!(entry.to_string(), original);
+}
+
+#[test]
+fn test_set_opt_multiple_operations() {
+    // Test multiple set_opt operations
+    let wf: super::WatchFile = r#"version=4
+https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+
+    entry.set_opt("compression", "xz");
+    entry.set_opt("repack", "");
+    entry.set_opt("dversionmangle", "s/\\+ds//");
+
+    assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
+    assert_eq!(
+        entry.get_option("dversionmangle"),
+        Some("s/\\+ds//".to_string())
     );
 }
 

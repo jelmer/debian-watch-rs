@@ -59,6 +59,7 @@ pub(crate) enum SyntaxKind {
     ENTRY,            // "opts=foo=blah https://foo.com/bar .*/v?(\d\S+)\.tar\.gz\n"
     OPTS_LIST,        // "opts=foo=blah"
     OPTION,           // "foo=blah"
+    OPTION_SEPARATOR, // "," (comma separator between options)
     URL,              // "https://foo.com/bar"
     MATCHING_PATTERN, // ".*/v?(\d\S+)\.tar\.gz"
     VERSION_POLICY,   // "debian"

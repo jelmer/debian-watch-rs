@@ -8,12 +8,19 @@ description = "parser for Debian watch files"
 repository = "https://github.com/jelmer/debian-watch-rs.git"
 homepage = "https://github.com/jelmer/debian-watch-rs"
 
+[features]
+default = []
+discover = ["scraper", "reqwest"]
+blocking = ["reqwest?/blocking"]
+
 [dependencies]
 rowan = "0.16.1"
 m_lexer = "0.0.4"
 debversion = ">=0.4.7, <0.6"
 url = "2.5.7"
 regex = "1"
+scraper = { version = "0.22", optional = true }
+reqwest = { version = "0.12", optional = true }
 
 [dev-dependencies]
 maplit = "1.0.2"

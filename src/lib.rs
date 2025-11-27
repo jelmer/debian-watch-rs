@@ -30,6 +30,7 @@ mod parse;
 
 pub mod mangle;
 pub mod release;
+pub mod search;
 
 /// Any watch files without a version are assumed to be
 /// version 1.

@@ -39,6 +39,7 @@ dependencies = [
  "debversion",
  "m_lexer",
  "maplit",
+ "regex",
  "rowan",
  "url",
 ]

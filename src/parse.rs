@@ -456,6 +456,72 @@ impl WatchFile {
             self.0.splice_children(0..0, vec![new_version_node.into()]);
         }
     }
+
+    /// Discover releases for all entries in the watch file (async version)
+    ///
+    /// Fetches URLs and searches for version matches for all entries.
+    /// Requires the 'discover' feature.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// # async fn example() {
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let all_releases = wf.uscan(|| "mypackage".to_string()).await.unwrap();
+    /// for (entry_idx, releases) in all_releases.iter().enumerate() {
+    ///     println!("Entry {}: {} releases found", entry_idx, releases.len());
+    /// }
+    /// # }
+    /// ```
+    #[cfg(feature = "discover")]
+    pub async fn uscan(
+        &self,
+        package: impl Fn() -> String,
+    ) -> Result<Vec<Vec<crate::Release>>, Box<dyn std::error::Error>> {
+        let mut all_releases = Vec::new();
+
+        for entry in self.entries() {
+            let releases = entry.discover(|| package()).await?;
+            all_releases.push(releases);
+        }
+
+        Ok(all_releases)
+    }
+
+    /// Discover releases for all entries in the watch file (blocking version)
+    ///
+    /// Fetches URLs and searches for version matches for all entries.
+    /// Requires both 'discover' and 'blocking' features.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let all_releases = wf.uscan_blocking(|| "mypackage".to_string()).unwrap();
+    /// for (entry_idx, releases) in all_releases.iter().enumerate() {
+    ///     println!("Entry {}: {} releases found", entry_idx, releases.len());
+    /// }
+    /// ```
+    #[cfg(all(feature = "discover", feature = "blocking"))]
+    pub fn uscan_blocking(
+        &self,
+        package: impl Fn() -> String,
+    ) -> Result<Vec<Vec<crate::Release>>, Box<dyn std::error::Error>> {
+        let mut all_releases = Vec::new();
+
+        for entry in self.entries() {
+            let releases = entry.discover_blocking(|| package())?;
+            all_releases.push(releases);
+        }
+
+        Ok(all_releases)
+    }
 }
 
 impl FromStr for WatchFile {

@@ -829,6 +829,29 @@ impl Entry {
         }
     }
 
+    /// Apply dirversionmangle to a directory path string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=dirversionmangle=s/v(\d)/$1/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+    /// ```
+    pub fn apply_dirversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.dirversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
     /// Discover releases for this entry (async version)
     ///
     /// Fetches the URL and searches for version matches.
@@ -2497,4 +2520,35 @@ https://example.com/ .*
     .unwrap();
     let entry = wf.entries().next().unwrap();
     assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0");
+}
+
+#[test]
+fn test_apply_dirversionmangle() {
+    // Test basic dirversionmangle - removing 'v' prefix
+    let wf: super::WatchFile = r#"version=4
+opts=dirversionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+    assert_eq!(entry.apply_dirversionmangle("v2.5.3").unwrap(), "2.5.3");
+
+    // Test dirversionmangle with capture groups
+    let wf: super::WatchFile = r#"version=4
+opts=dirversionmangle=s/v(\d)/$1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "v1.0");
 }

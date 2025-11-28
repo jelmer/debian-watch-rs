@@ -37,6 +37,53 @@ impl Release {
             pgpsigurl,
         }
     }
+
+    /// Download the release tarball (async version)
+    ///
+    /// Downloads the tarball from the release URL.
+    /// Requires the 'discover' feature.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use debian_watch::Release;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let release = Release::new("1.0.0", "https://example.com/project-1.0.tar.gz", None);
+    /// let data = release.download().await?;
+    /// println!("Downloaded {} bytes", data.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "discover")]
+    pub async fn download(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let client = reqwest::Client::new();
+        let response = client.get(&self.url).send().await?;
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Download the release tarball (blocking version)
+    ///
+    /// Downloads the tarball from the release URL.
+    /// Requires both 'discover' and 'blocking' features.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use debian_watch::Release;
+    ///
+    /// let release = Release::new("1.0.0", "https://example.com/project-1.0.tar.gz", None);
+    /// let data = release.download_blocking()?;
+    /// println!("Downloaded {} bytes", data.len());
+    /// ```
+    #[cfg(all(feature = "discover", feature = "blocking"))]
+    pub fn download_blocking(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let client = reqwest::blocking::Client::new();
+        let response = client.get(&self.url).send()?;
+        let bytes = response.bytes()?;
+        Ok(bytes.to_vec())
+    }
 }
 
 impl PartialOrd for Release {

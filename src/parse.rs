@@ -875,6 +875,31 @@ impl Entry {
         }
     }
 
+    /// Apply pagemangle to page content bytes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=pagemangle=s/&amp;/&/g https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+    ///     b"foo & bar"
+    /// );
+    /// ```
+    pub fn apply_pagemangle(&self, page: &[u8]) -> Result<Vec<u8>, crate::mangle::MangleError> {
+        if let Some(vm) = self.pagemangle() {
+            let page_str = String::from_utf8_lossy(page);
+            let mangled = crate::mangle::apply_mangle(&vm, &page_str)?;
+            Ok(mangled.into_bytes())
+        } else {
+            Ok(page.to_vec())
+        }
+    }
+
     /// Discover releases for this entry (async version)
     ///
     /// Fetches the URL and searches for version matches.
@@ -2624,5 +2649,47 @@ https://example.com/ .*
             .apply_filenamemangle("https://example.com/file.tar.gz")
             .unwrap(),
         "https://example.com/file.tar.gz"
+    );
+}
+
+#[test]
+fn test_apply_pagemangle() {
+    // Test pagemangle to decode HTML entities
+    let wf: super::WatchFile = r#"version=4
+opts=pagemangle=s/&amp;/&/g https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+        b"foo & bar"
+    );
+    assert_eq!(
+        entry
+            .apply_pagemangle(b"&amp; foo &amp; bar &amp;")
+            .unwrap(),
+        b"& foo & bar &"
+    );
+
+    // Test pagemangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=pagemangle=s/<[^>]+>//g https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_pagemangle(b"<div>text</div>").unwrap(), b"text");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+        b"foo &amp; bar"
     );
 }

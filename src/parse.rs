@@ -806,6 +806,29 @@ impl Entry {
         }
     }
 
+    /// Apply oversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=oversionmangle=s/$/-1/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0-1");
+    /// ```
+    pub fn apply_oversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.oversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
     /// Discover releases for this entry (async version)
     ///
     /// Fetches the URL and searches for version matches.
@@ -2443,4 +2466,35 @@ https://example.com/ .*
     .unwrap();
     let entry = wf.entries().next().unwrap();
     assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0+dfsg");
+}
+
+#[test]
+fn test_apply_oversionmangle() {
+    // Test basic oversionmangle - adding suffix
+    let wf: super::WatchFile = r#"version=4
+opts=oversionmangle=s/$/-1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0-1");
+    assert_eq!(entry.apply_oversionmangle("2.5.3").unwrap(), "2.5.3-1");
+
+    // Test oversionmangle for adding +dfsg suffix
+    let wf: super::WatchFile = r#"version=4
+opts=oversionmangle=s/$/.dfsg/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0.dfsg");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0");
 }

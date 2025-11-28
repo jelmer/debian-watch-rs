@@ -852,6 +852,29 @@ impl Entry {
         }
     }
 
+    /// Apply filenamemangle to a URL or filename string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/mypackage-$1.tar.gz/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_filenamemangle("https://example.com/v1.0.tar.gz").unwrap(),
+    ///     "mypackage-1.0.tar.gz"
+    /// );
+    /// ```
+    pub fn apply_filenamemangle(&self, url: &str) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.filenamemangle() {
+            crate::mangle::apply_mangle(&vm, url)
+        } else {
+            Ok(url.to_string())
+        }
+    }
+
     /// Discover releases for this entry (async version)
     ///
     /// Fetches the URL and searches for version matches.
@@ -2551,4 +2574,55 @@ https://example.com/ .*
     .unwrap();
     let entry = wf.entries().next().unwrap();
     assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "v1.0");
+}
+
+#[test]
+fn test_apply_filenamemangle() {
+    // Test filenamemangle to generate tarball filename
+    let wf: super::WatchFile = r#"version=4
+opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/mypackage-$1.tar.gz/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/v1.0.tar.gz")
+            .unwrap(),
+        "mypackage-1.0.tar.gz"
+    );
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/2.5.3.tar.gz")
+            .unwrap(),
+        "mypackage-2.5.3.tar.gz"
+    );
+
+    // Test filenamemangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=filenamemangle=s/.*\/(.*)/$1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/path/to/file.tar.gz")
+            .unwrap(),
+        "file.tar.gz"
+    );
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/file.tar.gz")
+            .unwrap(),
+        "https://example.com/file.tar.gz"
+    );
 }

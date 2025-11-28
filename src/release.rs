@@ -6,12 +6,16 @@ use std::cmp::Ordering;
 /// A discovered release from an upstream source
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
-    /// The version string of the release
+    /// The version string of the release (after uversionmangle)
     pub version: String,
-    /// The URL to download the release tarball
+    /// The URL to download the release tarball (after downloadurlmangle)
     pub url: String,
     /// Optional URL to the PGP signature file
     pub pgpsigurl: Option<String>,
+    /// Optional target filename for the downloaded tarball (from filenamemangle)
+    pub target_filename: Option<String>,
+    /// Optional Debian package version (from oversionmangle, e.g., "1.0+dfsg")
+    pub package_version: Option<String>,
 }
 
 impl Release {
@@ -35,6 +39,41 @@ impl Release {
             version: version.into(),
             url: url.into(),
             pgpsigurl,
+            target_filename: None,
+            package_version: None,
+        }
+    }
+
+    /// Create a new Release with all fields
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use debian_watch::Release;
+    ///
+    /// let release = Release::new_full(
+    ///     "1.0.0",
+    ///     "https://example.com/project-1.0.0.tar.gz",
+    ///     Some("https://example.com/project-1.0.0.tar.gz.asc".to_string()),
+    ///     Some("myproject_1.0.0.orig.tar.gz".to_string()),
+    ///     Some("1.0.0+dfsg".to_string()),
+    /// );
+    /// assert_eq!(release.version, "1.0.0");
+    /// assert_eq!(release.target_filename, Some("myproject_1.0.0.orig.tar.gz".to_string()));
+    /// ```
+    pub fn new_full(
+        version: impl Into<String>,
+        url: impl Into<String>,
+        pgpsigurl: Option<String>,
+        target_filename: Option<String>,
+        package_version: Option<String>,
+    ) -> Self {
+        Self {
+            version: version.into(),
+            url: url.into(),
+            pgpsigurl,
+            target_filename,
+            package_version,
         }
     }
 

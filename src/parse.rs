@@ -783,6 +783,29 @@ impl Entry {
         }
     }
 
+    /// Apply dversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=dversionmangle=s/\+dfsg$// https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0");
+    /// ```
+    pub fn apply_dversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.dversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
     /// Discover releases for this entry (async version)
     ///
     /// Fetches the URL and searches for version matches.
@@ -2380,4 +2403,44 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz 
         entry.to_string(),
         "opts=compression=xz https://example.com/releases (?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz debian custom-script.sh\n"
     );
+}
+
+#[test]
+fn test_apply_dversionmangle() {
+    // Test basic dversionmangle
+    let wf: super::WatchFile = r#"version=4
+opts=dversionmangle=s/\+dfsg$// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0");
+    assert_eq!(entry.apply_dversionmangle("1.0").unwrap(), "1.0");
+
+    // Test with versionmangle (fallback)
+    let wf: super::WatchFile = r#"version=4
+opts=versionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("v1.0").unwrap(), "1.0");
+
+    // Test with both dversionmangle and versionmangle (dversionmangle takes precedence)
+    let wf: super::WatchFile = r#"version=4
+opts=dversionmangle=s/\+ds//,versionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+ds").unwrap(), "1.0");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0+dfsg");
 }

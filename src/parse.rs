@@ -959,6 +959,9 @@ impl Entry {
         let response = client.get(url.as_str()).send().await?;
         let body = response.bytes().await?;
 
+        // Apply pagemangle if present
+        let mangled_body = self.apply_pagemangle(&body)?;
+
         let matching_pattern = self
             .matching_pattern()
             .ok_or("matching_pattern is required")?;
@@ -969,7 +972,7 @@ impl Entry {
                 crate::SearchMode::Html => "html",
                 crate::SearchMode::Plain => "plain",
             },
-            std::io::Cursor::new(body.as_ref()),
+            std::io::Cursor::new(mangled_body.as_ref()),
             &subst(&matching_pattern, || package_name.clone()),
             &package_name,
             url.as_str(),
@@ -980,14 +983,17 @@ impl Entry {
             // Apply uversionmangle
             let mangled_version = self.apply_uversionmangle(&version)?;
 
+            // Apply downloadurlmangle
+            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
+
             // Apply pgpsigurlmangle if present
             let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(crate::mangle::apply_mangle(&mangle, &full_url)?)
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
-            releases.push(crate::Release::new(mangled_version, full_url, pgpsigurl));
+            releases.push(crate::Release::new(mangled_version, mangled_url, pgpsigurl));
         }
 
         Ok(releases)
@@ -1029,6 +1035,9 @@ impl Entry {
         let response = client.get(url.as_str()).send()?;
         let body = response.bytes()?;
 
+        // Apply pagemangle if present
+        let mangled_body = self.apply_pagemangle(&body)?;
+
         let matching_pattern = self
             .matching_pattern()
             .ok_or("matching_pattern is required")?;
@@ -1039,7 +1048,7 @@ impl Entry {
                 crate::SearchMode::Html => "html",
                 crate::SearchMode::Plain => "plain",
             },
-            std::io::Cursor::new(body.as_ref()),
+            std::io::Cursor::new(mangled_body.as_ref()),
             &subst(&matching_pattern, || package_name.clone()),
             &package_name,
             url.as_str(),
@@ -1050,14 +1059,17 @@ impl Entry {
             // Apply uversionmangle
             let mangled_version = self.apply_uversionmangle(&version)?;
 
+            // Apply downloadurlmangle
+            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
+
             // Apply pgpsigurlmangle if present
             let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(crate::mangle::apply_mangle(&mangle, &full_url)?)
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
-            releases.push(crate::Release::new(mangled_version, full_url, pgpsigurl));
+            releases.push(crate::Release::new(mangled_version, mangled_url, pgpsigurl));
         }
 
         Ok(releases)

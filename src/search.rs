@@ -3,7 +3,6 @@
 use regex::Regex;
 use std::io::Read;
 
-#[cfg(feature = "discover")]
 /// Search for version matches in HTML content
 ///
 /// Parses the HTML and searches for links matching the given pattern.
@@ -34,56 +33,45 @@ pub fn html_search(
 ) -> Box<dyn Iterator<Item = (String, String)>> {
     let html = String::from_utf8_lossy(body);
     let doc = scraper::Html::parse_document(&html);
+
+    // Check for <base href="..."> tag to use as base URL for resolving relative hrefs
+    let base_selector = scraper::Selector::parse("base").unwrap();
+    let effective_base_url = doc
+        .select(&base_selector)
+        .filter_map(|element| element.value().attr("href"))
+        .next()
+        .unwrap_or(base_url);
+
+    let base_url_parsed = match url::Url::parse(effective_base_url) {
+        Ok(u) => u,
+        Err(_) => return Box::new(std::iter::empty()),
+    };
     let selector = scraper::Selector::parse("a").unwrap();
 
-    let pattern = if matching_pattern.contains('/') {
-        matching_pattern.to_string()
-    } else {
-        // If pattern doesn't contain '/', join it with base_url
-        let base = base_url.trim_end_matches('/');
-        format!("{}/{}", base, matching_pattern)
-    };
-
-    let re = match Regex::new(&pattern) {
+    let re = match Regex::new(matching_pattern) {
         Ok(r) => r,
         Err(_) => return Box::new(std::iter::empty()),
     };
 
-    let base_url = base_url.to_string();
     let results: Vec<(String, String)> = doc
         .select(&selector)
         .filter_map(move |element| {
             let href = element.value().attr("href")?;
-            // Resolve relative URLs
-            let full_url = if href.starts_with("http://") || href.starts_with("https://") {
-                href.to_string()
-            } else {
-                let base = base_url.trim_end_matches('/');
-                if href.starts_with('/') {
-                    // Parse base URL to get scheme and host
-                    if let Ok(base_parsed) = url::Url::parse(&base_url) {
-                        format!(
-                            "{}://{}{}",
-                            base_parsed.scheme(),
-                            base_parsed.host_str().unwrap_or(""),
-                            href
-                        )
-                    } else {
-                        format!("{}{}", base, href)
-                    }
-                } else {
-                    format!("{}/{}", base, href)
-                }
-            };
 
-            // Try to match the pattern
-            if let Some(captures) = re.captures(&full_url) {
+            // Match the pattern against the raw href value (as per uscan behavior)
+            if let Some(captures) = re.captures(href) {
                 // Extract the first capture group as the version
                 if let Some(version_match) = captures.get(1) {
                     let version = version_match.as_str().to_string();
-                    // Use capture group 0 (full match) as the URL
-                    let url = captures.get(0).unwrap().as_str().to_string();
-                    Some((version, url))
+
+                    // Convert href to absolute URL using proper URL joining
+                    // Use base tag href if present, otherwise use page URL
+                    let full_url = match base_url_parsed.join(href) {
+                        Ok(url) => url.to_string(),
+                        Err(_) => return None,
+                    };
+
+                    Some((version, full_url))
                 } else {
                     None
                 }
@@ -128,7 +116,10 @@ pub fn plain_search(
     };
 
     let text = String::from_utf8_lossy(body);
-    let base_url = base_url.to_string();
+    let base_url_parsed = match url::Url::parse(base_url) {
+        Ok(u) => u,
+        Err(_) => return Box::new(std::iter::empty()),
+    };
 
     let results: Vec<(String, String)> = re
         .captures_iter(&text)
@@ -139,15 +130,20 @@ pub fn plain_search(
                 // Use capture group 0 (full match) for constructing the URL
                 let matched = captures.get(0).unwrap().as_str();
 
-                // Resolve to full URL
-                let url = if matched.starts_with("http://") || matched.starts_with("https://") {
+                // Convert matched text to absolute URL using proper URL joining
+                let full_url = if matched.starts_with("http://") || matched.starts_with("https://")
+                {
+                    // Already absolute
                     matched.to_string()
                 } else {
-                    let base = base_url.trim_end_matches('/');
-                    format!("{}/{}", base, matched.trim_start_matches('/'))
+                    // Relative - use proper URL joining
+                    match base_url_parsed.join(matched) {
+                        Ok(url) => url.to_string(),
+                        Err(_) => return None,
+                    }
                 };
 
-                Some((version, url))
+                Some((version, full_url))
             } else {
                 None
             }
@@ -197,6 +193,61 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "discover")]
+    fn test_html_search_absolute_urls() {
+        // Test curl case with <base> tag
+        let html = b"<html><head><base href='https://curl.se'></head><body><a href='download/curl-8.14.0.tar.gz'>curl</a></body></html>";
+        let results: Vec<_> = html_search(
+            html,
+            r"download/curl-([\d.]+)\.tar\.gz",
+            "https://curl.se/download/",
+        )
+        .collect();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "8.14.0");
+        // With <base href="https://curl.se">, the href resolves to https://curl.se/download/curl-8.14.0.tar.gz
+        assert_eq!(results[0].1, "https://curl.se/download/curl-8.14.0.tar.gz");
+    }
+
+    #[test]
+    #[cfg(feature = "discover")]
+    fn test_html_search_absolute_urls_with_slash_prefix() {
+        // Test that returned URLs are absolute when href starts with '/'
+        let html = b"<html><body><a href='/download/curl-8.14.0.tar.gz'>curl</a></body></html>";
+        let results: Vec<_> = html_search(
+            html,
+            r"download/curl-([\d.]+)\.tar\.gz",
+            "https://curl.se/download/",
+        )
+        .collect();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "8.14.0");
+        assert_eq!(results[0].1, "https://curl.se/download/curl-8.14.0.tar.gz");
+    }
+
+    #[test]
+    #[cfg(feature = "discover")]
+    fn test_html_search_with_absolute_href() {
+        // Test that absolute URLs in href are preserved correctly
+        let html = b"<html><body><a href='https://example.org/files/project-3.5.0.tar.gz'>v3.5.0</a></body></html>";
+        let results: Vec<_> = html_search(
+            html,
+            r"https://example\.org/files/project-([\d.]+)\.tar\.gz",
+            "https://example.com/",
+        )
+        .collect();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "3.5.0");
+        assert_eq!(
+            results[0].1,
+            "https://example.org/files/project-3.5.0.tar.gz"
+        );
+    }
+
+    #[test]
     fn test_plain_search() {
         let text = b"Available: project-1.0.tar.gz project-2.0.tar.gz";
         let results: Vec<_> =
@@ -205,5 +256,36 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.iter().any(|(v, _)| v == "1.0"));
         assert!(results.iter().any(|(v, _)| v == "2.0"));
+    }
+
+    #[test]
+    fn test_plain_search_absolute_urls() {
+        // Test that returned URLs are absolute, not relative
+        let text = b"Available: curl-8.14.0.tar.gz";
+        let results: Vec<_> =
+            plain_search(text, r"curl-([\d.]+)\.tar\.gz", "https://curl.se/download/").collect();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "8.14.0");
+        assert_eq!(results[0].1, "https://curl.se/download/curl-8.14.0.tar.gz");
+    }
+
+    #[test]
+    fn test_plain_search_with_absolute_urls() {
+        // Test that absolute URLs in text are preserved correctly
+        let text = b"Available: https://example.org/files/project-3.5.0.tar.gz";
+        let results: Vec<_> = plain_search(
+            text,
+            r"https://example\.org/files/project-([\d.]+)\.tar\.gz",
+            "https://example.com/",
+        )
+        .collect();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "3.5.0");
+        assert_eq!(
+            results[0].1,
+            "https://example.org/files/project-3.5.0.tar.gz"
+        );
     }
 }

@@ -456,6 +456,72 @@ impl WatchFile {
             self.0.splice_children(0..0, vec![new_version_node.into()]);
         }
     }
+
+    /// Discover releases for all entries in the watch file (async version)
+    ///
+    /// Fetches URLs and searches for version matches for all entries.
+    /// Requires the 'discover' feature.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// # async fn example() {
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let all_releases = wf.uscan(|| "mypackage".to_string()).await.unwrap();
+    /// for (entry_idx, releases) in all_releases.iter().enumerate() {
+    ///     println!("Entry {}: {} releases found", entry_idx, releases.len());
+    /// }
+    /// # }
+    /// ```
+    #[cfg(feature = "discover")]
+    pub async fn uscan(
+        &self,
+        package: impl Fn() -> String,
+    ) -> Result<Vec<Vec<crate::Release>>, Box<dyn std::error::Error>> {
+        let mut all_releases = Vec::new();
+
+        for entry in self.entries() {
+            let releases = entry.discover(|| package()).await?;
+            all_releases.push(releases);
+        }
+
+        Ok(all_releases)
+    }
+
+    /// Discover releases for all entries in the watch file (blocking version)
+    ///
+    /// Fetches URLs and searches for version matches for all entries.
+    /// Requires both 'discover' and 'blocking' features.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let all_releases = wf.uscan_blocking(|| "mypackage".to_string()).unwrap();
+    /// for (entry_idx, releases) in all_releases.iter().enumerate() {
+    ///     println!("Entry {}: {} releases found", entry_idx, releases.len());
+    /// }
+    /// ```
+    #[cfg(all(feature = "discover", feature = "blocking"))]
+    pub fn uscan_blocking(
+        &self,
+        package: impl Fn() -> String,
+    ) -> Result<Vec<Vec<crate::Release>>, Box<dyn std::error::Error>> {
+        let mut all_releases = Vec::new();
+
+        for entry in self.entries() {
+            let releases = entry.discover_blocking(|| package())?;
+            all_releases.push(releases);
+        }
+
+        Ok(all_releases)
+    }
 }
 
 impl FromStr for WatchFile {
@@ -715,6 +781,146 @@ impl Entry {
         } else {
             Ok(version.to_string())
         }
+    }
+
+    /// Discover releases for this entry (async version)
+    ///
+    /// Fetches the URL and searches for version matches.
+    /// Requires the 'discover' feature.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// # async fn example() {
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// let releases = entry.discover(|| "mypackage".to_string()).await.unwrap();
+    /// for release in releases {
+    ///     println!("{}: {}", release.version, release.url);
+    /// }
+    /// # }
+    /// ```
+    #[cfg(feature = "discover")]
+    pub async fn discover(
+        &self,
+        package: impl FnOnce() -> String,
+    ) -> Result<Vec<crate::Release>, Box<dyn std::error::Error>> {
+        let url = self.format_url(package);
+        let user_agent = self
+            .user_agent()
+            .unwrap_or_else(|| crate::DEFAULT_USER_AGENT.to_string());
+        let searchmode = self.searchmode().unwrap_or(crate::SearchMode::Html);
+
+        let client = reqwest::Client::builder().user_agent(user_agent).build()?;
+
+        let response = client.get(url.as_str()).send().await?;
+        let body = response.bytes().await?;
+
+        let matching_pattern = self
+            .matching_pattern()
+            .ok_or("matching_pattern is required")?;
+
+        let package_name = String::new(); // Not used in search currently
+        let results = crate::search::search(
+            match searchmode {
+                crate::SearchMode::Html => "html",
+                crate::SearchMode::Plain => "plain",
+            },
+            std::io::Cursor::new(body.as_ref()),
+            &subst(&matching_pattern, || package_name.clone()),
+            &package_name,
+            url.as_str(),
+        )?;
+
+        let mut releases = Vec::new();
+        for (version, full_url) in results {
+            // Apply uversionmangle
+            let mangled_version = self.apply_uversionmangle(&version)?;
+
+            // Apply pgpsigurlmangle if present
+            let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
+                Some(crate::mangle::apply_mangle(&mangle, &full_url)?)
+            } else {
+                None
+            };
+
+            releases.push(crate::Release::new(mangled_version, full_url, pgpsigurl));
+        }
+
+        Ok(releases)
+    }
+
+    /// Discover releases for this entry (blocking version)
+    ///
+    /// Fetches the URL and searches for version matches.
+    /// Requires both 'discover' and 'blocking' features.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// let releases = entry.discover_blocking(|| "mypackage".to_string()).unwrap();
+    /// for release in releases {
+    ///     println!("{}: {}", release.version, release.url);
+    /// }
+    /// ```
+    #[cfg(all(feature = "discover", feature = "blocking"))]
+    pub fn discover_blocking(
+        &self,
+        package: impl FnOnce() -> String,
+    ) -> Result<Vec<crate::Release>, Box<dyn std::error::Error>> {
+        let url = self.format_url(package);
+        let user_agent = self
+            .user_agent()
+            .unwrap_or_else(|| crate::DEFAULT_USER_AGENT.to_string());
+        let searchmode = self.searchmode().unwrap_or(crate::SearchMode::Html);
+
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(user_agent)
+            .build()?;
+
+        let response = client.get(url.as_str()).send()?;
+        let body = response.bytes()?;
+
+        let matching_pattern = self
+            .matching_pattern()
+            .ok_or("matching_pattern is required")?;
+
+        let package_name = String::new(); // Not used in search currently
+        let results = crate::search::search(
+            match searchmode {
+                crate::SearchMode::Html => "html",
+                crate::SearchMode::Plain => "plain",
+            },
+            std::io::Cursor::new(body.as_ref()),
+            &subst(&matching_pattern, || package_name.clone()),
+            &package_name,
+            url.as_str(),
+        )?;
+
+        let mut releases = Vec::new();
+        for (version, full_url) in results {
+            // Apply uversionmangle
+            let mangled_version = self.apply_uversionmangle(&version)?;
+
+            // Apply pgpsigurlmangle if present
+            let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
+                Some(crate::mangle::apply_mangle(&mangle, &full_url)?)
+            } else {
+                None
+            };
+
+            releases.push(crate::Release::new(mangled_version, full_url, pgpsigurl));
+        }
+
+        Ok(releases)
     }
 
     /// Returns options set

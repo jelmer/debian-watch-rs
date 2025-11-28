@@ -1,0 +1,14 @@
+dversionmangle
+oversionmangle
+dirversionmangle
+filenamemangle
+pagemangle
+downloadurlmangle
+repack
+repacksuffix
+compression
+mode
+pretty
+versionmode
+component
+ctype

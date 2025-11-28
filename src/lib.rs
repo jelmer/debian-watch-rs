@@ -29,6 +29,8 @@ mod lex;
 mod parse;
 
 pub mod mangle;
+#[cfg(feature = "pgp")]
+pub mod pgp;
 pub mod release;
 pub mod search;
 

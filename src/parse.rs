@@ -900,6 +900,29 @@ impl Entry {
         }
     }
 
+    /// Apply downloadurlmangle to a URL string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=downloadurlmangle=s|/archive/|/download/| https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_downloadurlmangle("https://example.com/archive/file.tar.gz").unwrap(),
+    ///     "https://example.com/download/file.tar.gz"
+    /// );
+    /// ```
+    pub fn apply_downloadurlmangle(&self, url: &str) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.downloadurlmangle() {
+            crate::mangle::apply_mangle(&vm, url)
+        } else {
+            Ok(url.to_string())
+        }
+    }
+
     /// Discover releases for this entry (async version)
     ///
     /// Fetches the URL and searches for version matches.
@@ -2691,5 +2714,50 @@ https://example.com/ .*
     assert_eq!(
         entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
         b"foo &amp; bar"
+    );
+}
+
+#[test]
+fn test_apply_downloadurlmangle() {
+    // Test downloadurlmangle to change URL path
+    let wf: super::WatchFile = r#"version=4
+opts=downloadurlmangle=s|/archive/|/download/| https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://example.com/archive/file.tar.gz")
+            .unwrap(),
+        "https://example.com/download/file.tar.gz"
+    );
+
+    // Test downloadurlmangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=downloadurlmangle=s/github\.com/raw.githubusercontent.com/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://github.com/user/repo/file.tar.gz")
+            .unwrap(),
+        "https://raw.githubusercontent.com/user/repo/file.tar.gz"
+    );
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://example.com/archive/file.tar.gz")
+            .unwrap(),
+        "https://example.com/archive/file.tar.gz"
     );
 }

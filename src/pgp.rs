@@ -180,7 +180,7 @@ where
                                 Ok(GoodChecksum { ka, .. }) => {
                                     valid_signature = true;
                                     // Extract the fingerprint from the key amalgamation
-                                    self.fingerprint = Some(ka.fingerprint().to_hex());
+                                    self.fingerprint = Some(ka.key().fingerprint().to_hex());
                                 }
                                 Err(e) => {
                                     eprintln!("Signature verification failed: {}", e);
@@ -201,7 +201,7 @@ where
         }
     }
 
-    let mut helper = Helper {
+    let helper = Helper {
         cert: &cert,
         fingerprint: None,
     };

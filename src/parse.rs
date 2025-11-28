@@ -783,6 +783,146 @@ impl Entry {
         }
     }
 
+    /// Apply dversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=dversionmangle=s/\+dfsg$// https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0");
+    /// ```
+    pub fn apply_dversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.dversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
+    /// Apply oversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=oversionmangle=s/$/-1/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0-1");
+    /// ```
+    pub fn apply_oversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.oversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
+    /// Apply dirversionmangle to a directory path string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=dirversionmangle=s/v(\d)/$1/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+    /// ```
+    pub fn apply_dirversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.dirversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
+    /// Apply filenamemangle to a URL or filename string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/mypackage-$1.tar.gz/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_filenamemangle("https://example.com/v1.0.tar.gz").unwrap(),
+    ///     "mypackage-1.0.tar.gz"
+    /// );
+    /// ```
+    pub fn apply_filenamemangle(&self, url: &str) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.filenamemangle() {
+            crate::mangle::apply_mangle(&vm, url)
+        } else {
+            Ok(url.to_string())
+        }
+    }
+
+    /// Apply pagemangle to page content bytes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=pagemangle=s/&amp;/&/g https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+    ///     b"foo & bar"
+    /// );
+    /// ```
+    pub fn apply_pagemangle(&self, page: &[u8]) -> Result<Vec<u8>, crate::mangle::MangleError> {
+        if let Some(vm) = self.pagemangle() {
+            let page_str = String::from_utf8_lossy(page);
+            let mangled = crate::mangle::apply_mangle(&vm, &page_str)?;
+            Ok(mangled.into_bytes())
+        } else {
+            Ok(page.to_vec())
+        }
+    }
+
+    /// Apply downloadurlmangle to a URL string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=downloadurlmangle=s|/archive/|/download/| https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_downloadurlmangle("https://example.com/archive/file.tar.gz").unwrap(),
+    ///     "https://example.com/download/file.tar.gz"
+    /// );
+    /// ```
+    pub fn apply_downloadurlmangle(&self, url: &str) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.downloadurlmangle() {
+            crate::mangle::apply_mangle(&vm, url)
+        } else {
+            Ok(url.to_string())
+        }
+    }
+
     /// Discover releases for this entry (async version)
     ///
     /// Fetches the URL and searches for version matches.
@@ -819,6 +959,9 @@ impl Entry {
         let response = client.get(url.as_str()).send().await?;
         let body = response.bytes().await?;
 
+        // Apply pagemangle if present
+        let mangled_body = self.apply_pagemangle(&body)?;
+
         let matching_pattern = self
             .matching_pattern()
             .ok_or("matching_pattern is required")?;
@@ -829,7 +972,7 @@ impl Entry {
                 crate::SearchMode::Html => "html",
                 crate::SearchMode::Plain => "plain",
             },
-            std::io::Cursor::new(body.as_ref()),
+            std::io::Cursor::new(mangled_body.as_ref()),
             &subst(&matching_pattern, || package_name.clone()),
             &package_name,
             url.as_str(),
@@ -840,14 +983,17 @@ impl Entry {
             // Apply uversionmangle
             let mangled_version = self.apply_uversionmangle(&version)?;
 
+            // Apply downloadurlmangle
+            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
+
             // Apply pgpsigurlmangle if present
             let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(crate::mangle::apply_mangle(&mangle, &full_url)?)
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
-            releases.push(crate::Release::new(mangled_version, full_url, pgpsigurl));
+            releases.push(crate::Release::new(mangled_version, mangled_url, pgpsigurl));
         }
 
         Ok(releases)
@@ -889,6 +1035,9 @@ impl Entry {
         let response = client.get(url.as_str()).send()?;
         let body = response.bytes()?;
 
+        // Apply pagemangle if present
+        let mangled_body = self.apply_pagemangle(&body)?;
+
         let matching_pattern = self
             .matching_pattern()
             .ok_or("matching_pattern is required")?;
@@ -899,7 +1048,7 @@ impl Entry {
                 crate::SearchMode::Html => "html",
                 crate::SearchMode::Plain => "plain",
             },
-            std::io::Cursor::new(body.as_ref()),
+            std::io::Cursor::new(mangled_body.as_ref()),
             &subst(&matching_pattern, || package_name.clone()),
             &package_name,
             url.as_str(),
@@ -910,14 +1059,17 @@ impl Entry {
             // Apply uversionmangle
             let mangled_version = self.apply_uversionmangle(&version)?;
 
+            // Apply downloadurlmangle
+            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
+
             // Apply pgpsigurlmangle if present
             let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(crate::mangle::apply_mangle(&mangle, &full_url)?)
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
-            releases.push(crate::Release::new(mangled_version, full_url, pgpsigurl));
+            releases.push(crate::Release::new(mangled_version, mangled_url, pgpsigurl));
         }
 
         Ok(releases)
@@ -2379,5 +2531,245 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz 
     assert_eq!(
         entry.to_string(),
         "opts=compression=xz https://example.com/releases (?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz debian custom-script.sh\n"
+    );
+}
+
+#[test]
+fn test_apply_dversionmangle() {
+    // Test basic dversionmangle
+    let wf: super::WatchFile = r#"version=4
+opts=dversionmangle=s/\+dfsg$// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0");
+    assert_eq!(entry.apply_dversionmangle("1.0").unwrap(), "1.0");
+
+    // Test with versionmangle (fallback)
+    let wf: super::WatchFile = r#"version=4
+opts=versionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("v1.0").unwrap(), "1.0");
+
+    // Test with both dversionmangle and versionmangle (dversionmangle takes precedence)
+    let wf: super::WatchFile = r#"version=4
+opts=dversionmangle=s/\+ds//,versionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+ds").unwrap(), "1.0");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0+dfsg");
+}
+
+#[test]
+fn test_apply_oversionmangle() {
+    // Test basic oversionmangle - adding suffix
+    let wf: super::WatchFile = r#"version=4
+opts=oversionmangle=s/$/-1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0-1");
+    assert_eq!(entry.apply_oversionmangle("2.5.3").unwrap(), "2.5.3-1");
+
+    // Test oversionmangle for adding +dfsg suffix
+    let wf: super::WatchFile = r#"version=4
+opts=oversionmangle=s/$/.dfsg/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0.dfsg");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0");
+}
+
+#[test]
+fn test_apply_dirversionmangle() {
+    // Test basic dirversionmangle - removing 'v' prefix
+    let wf: super::WatchFile = r#"version=4
+opts=dirversionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+    assert_eq!(entry.apply_dirversionmangle("v2.5.3").unwrap(), "2.5.3");
+
+    // Test dirversionmangle with capture groups
+    let wf: super::WatchFile = r#"version=4
+opts=dirversionmangle=s/v(\d)/$1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "v1.0");
+}
+
+#[test]
+fn test_apply_filenamemangle() {
+    // Test filenamemangle to generate tarball filename
+    let wf: super::WatchFile = r#"version=4
+opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/mypackage-$1.tar.gz/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/v1.0.tar.gz")
+            .unwrap(),
+        "mypackage-1.0.tar.gz"
+    );
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/2.5.3.tar.gz")
+            .unwrap(),
+        "mypackage-2.5.3.tar.gz"
+    );
+
+    // Test filenamemangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=filenamemangle=s/.*\/(.*)/$1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/path/to/file.tar.gz")
+            .unwrap(),
+        "file.tar.gz"
+    );
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/file.tar.gz")
+            .unwrap(),
+        "https://example.com/file.tar.gz"
+    );
+}
+
+#[test]
+fn test_apply_pagemangle() {
+    // Test pagemangle to decode HTML entities
+    let wf: super::WatchFile = r#"version=4
+opts=pagemangle=s/&amp;/&/g https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+        b"foo & bar"
+    );
+    assert_eq!(
+        entry
+            .apply_pagemangle(b"&amp; foo &amp; bar &amp;")
+            .unwrap(),
+        b"& foo & bar &"
+    );
+
+    // Test pagemangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=pagemangle=s/<[^>]+>//g https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_pagemangle(b"<div>text</div>").unwrap(), b"text");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+        b"foo &amp; bar"
+    );
+}
+
+#[test]
+fn test_apply_downloadurlmangle() {
+    // Test downloadurlmangle to change URL path
+    let wf: super::WatchFile = r#"version=4
+opts=downloadurlmangle=s|/archive/|/download/| https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://example.com/archive/file.tar.gz")
+            .unwrap(),
+        "https://example.com/download/file.tar.gz"
+    );
+
+    // Test downloadurlmangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=downloadurlmangle=s/github\.com/raw.githubusercontent.com/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://github.com/user/repo/file.tar.gz")
+            .unwrap(),
+        "https://raw.githubusercontent.com/user/repo/file.tar.gz"
+    );
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://example.com/archive/file.tar.gz")
+            .unwrap(),
+        "https://example.com/archive/file.tar.gz"
     );
 }

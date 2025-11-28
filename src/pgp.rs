@@ -50,6 +50,37 @@ impl From<anyhow::Error> for PgpError {
 /// Common signature file extensions to probe
 pub const SIGNATURE_EXTENSIONS: &[&str] = &[".asc", ".sig", ".sign", ".gpg"];
 
+/// Result of signature verification
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SignatureVerification {
+    /// Whether the signature is cryptographically valid
+    pub valid: bool,
+    /// The fingerprint of the signing key
+    pub fingerprint: Option<String>,
+    /// Error message if verification failed
+    pub error: Option<String>,
+}
+
+impl SignatureVerification {
+    /// Create a successful verification result
+    pub fn valid(fingerprint: String) -> Self {
+        Self {
+            valid: true,
+            fingerprint: Some(fingerprint),
+            error: None,
+        }
+    }
+
+    /// Create a failed verification result
+    pub fn invalid(error: String) -> Self {
+        Self {
+            valid: false,
+            fingerprint: None,
+            error: Some(error),
+        }
+    }
+}
+
 /// Generate potential signature URLs from a tarball URL
 ///
 /// Returns a list of URLs that might contain the detached signature,
@@ -76,7 +107,7 @@ pub fn probe_signature_urls(url: &str) -> Vec<String> {
         .collect()
 }
 
-/// Verify a detached PGP signature
+/// Verify a detached PGP signature and extract the key fingerprint
 ///
 /// Verifies that the signature correctly signs the data using the provided certificate.
 /// This performs cryptographic verification but does NOT verify certificate trust or validity.
@@ -90,7 +121,7 @@ pub fn probe_signature_urls(url: &str) -> Vec<String> {
 ///
 /// # Returns
 ///
-/// * `Ok(())` if the signature is cryptographically valid
+/// * `Ok(fingerprint)` with the signing key's fingerprint if the signature is cryptographically valid
 /// * `Err(PgpError)` if verification fails or parsing errors occur
 ///
 /// # Examples
@@ -103,11 +134,11 @@ pub fn probe_signature_urls(url: &str) -> Vec<String> {
 /// let cert = std::fs::read("pubkey.asc")?;
 ///
 /// match verify_detached(&signature[..], &data[..], &cert[..]) {
-///     Ok(()) => println!("Signature is cryptographically valid"),
+///     Ok(fingerprint) => println!("Signature valid, key fingerprint: {}", fingerprint),
 ///     Err(e) => eprintln!("Signature verification failed: {}", e),
 /// }
 /// ```
-pub fn verify_detached<S, D, C>(signature: S, data: D, cert: C) -> Result<(), PgpError>
+pub fn verify_detached<S, D, C>(signature: S, data: D, cert: C) -> Result<String, PgpError>
 where
     S: Read + Send + Sync,
     D: Read + Send + Sync,
@@ -126,6 +157,7 @@ where
     // Create a helper that provides public keys for verification
     struct Helper<'a> {
         cert: &'a openpgp::Cert,
+        fingerprint: Option<String>,
     }
 
     impl<'a> VerificationHelper for Helper<'a> {
@@ -145,8 +177,10 @@ where
                     MessageLayer::SignatureGroup { results } => {
                         for result in results {
                             match result {
-                                Ok(GoodChecksum { .. }) => {
+                                Ok(GoodChecksum { ka, .. }) => {
                                     valid_signature = true;
+                                    // Extract the fingerprint from the key amalgamation
+                                    self.fingerprint = Some(ka.fingerprint().to_hex());
                                 }
                                 Err(e) => {
                                     eprintln!("Signature verification failed: {}", e);
@@ -167,7 +201,10 @@ where
         }
     }
 
-    let helper = Helper { cert: &cert };
+    let mut helper = Helper {
+        cert: &cert,
+        fingerprint: None,
+    };
 
     // Create a verifier and verify the data
     let mut verifier =
@@ -176,10 +213,16 @@ where
     // In sequoia v2, we verify by calling verify_reader with the data
     verifier.verify_reader(data)?;
 
-    Ok(())
+    // Extract the fingerprint from the helper
+    let fingerprint = verifier
+        .into_helper()
+        .fingerprint
+        .ok_or_else(|| PgpError::VerificationError("No fingerprint found".to_string()))?;
+
+    Ok(fingerprint)
 }
 
-/// Verify a detached signature from byte slices
+/// Verify a detached signature from byte slices and extract the key fingerprint
 ///
 /// Convenience wrapper around `verify_detached` for in-memory data.
 ///
@@ -192,9 +235,14 @@ where
 /// let signature = include_bytes!("test.sig");
 /// let cert = include_bytes!("test_key.asc");
 ///
-/// verify_detached_bytes(signature, data, cert)?;
+/// let fingerprint = verify_detached_bytes(signature, data, cert)?;
+/// println!("Signature valid, key fingerprint: {}", fingerprint);
 /// ```
-pub fn verify_detached_bytes(signature: &[u8], data: &[u8], cert: &[u8]) -> Result<(), PgpError> {
+pub fn verify_detached_bytes(
+    signature: &[u8],
+    data: &[u8],
+    cert: &[u8],
+) -> Result<String, PgpError> {
     verify_detached(
         std::io::Cursor::new(signature),
         std::io::Cursor::new(data),

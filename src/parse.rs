@@ -694,6 +694,29 @@ impl Entry {
         self.get_option("oversionmangle")
     }
 
+    /// Apply uversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=uversionmangle=s/\+ds// https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_uversionmangle("1.0+ds").unwrap(), "1.0");
+    /// ```
+    pub fn apply_uversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.uversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
     /// Returns options set
     pub fn opts(&self) -> std::collections::HashMap<String, String> {
         let mut options = std::collections::HashMap::new();

@@ -993,7 +993,27 @@ impl Entry {
                 None
             };
 
-            releases.push(crate::Release::new(mangled_version, mangled_url, pgpsigurl));
+            // Apply filenamemangle if present
+            let target_filename = if self.filenamemangle().is_some() {
+                Some(self.apply_filenamemangle(&mangled_url)?)
+            } else {
+                None
+            };
+
+            // Apply oversionmangle if present
+            let package_version = if self.oversionmangle().is_some() {
+                Some(self.apply_oversionmangle(&mangled_version)?)
+            } else {
+                None
+            };
+
+            releases.push(crate::Release::new_full(
+                mangled_version,
+                mangled_url,
+                pgpsigurl,
+                target_filename,
+                package_version,
+            ));
         }
 
         Ok(releases)
@@ -1069,7 +1089,27 @@ impl Entry {
                 None
             };
 
-            releases.push(crate::Release::new(mangled_version, mangled_url, pgpsigurl));
+            // Apply filenamemangle if present
+            let target_filename = if self.filenamemangle().is_some() {
+                Some(self.apply_filenamemangle(&mangled_url)?)
+            } else {
+                None
+            };
+
+            // Apply oversionmangle if present
+            let package_version = if self.oversionmangle().is_some() {
+                Some(self.apply_oversionmangle(&mangled_version)?)
+            } else {
+                None
+            };
+
+            releases.push(crate::Release::new_full(
+                mangled_version,
+                mangled_url,
+                pgpsigurl,
+                target_filename,
+                package_version,
+            ));
         }
 
         Ok(releases)

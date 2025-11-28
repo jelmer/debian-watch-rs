@@ -6,12 +6,16 @@ use std::cmp::Ordering;
 /// A discovered release from an upstream source
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Release {
-    /// The version string of the release
+    /// The version string of the release (after uversionmangle)
     pub version: String,
-    /// The URL to download the release tarball
+    /// The URL to download the release tarball (after downloadurlmangle)
     pub url: String,
     /// Optional URL to the PGP signature file
     pub pgpsigurl: Option<String>,
+    /// Optional target filename for the downloaded tarball (from filenamemangle)
+    pub target_filename: Option<String>,
+    /// Optional Debian package version (from oversionmangle, e.g., "1.0+dfsg")
+    pub package_version: Option<String>,
 }
 
 impl Release {
@@ -35,7 +39,89 @@ impl Release {
             version: version.into(),
             url: url.into(),
             pgpsigurl,
+            target_filename: None,
+            package_version: None,
         }
+    }
+
+    /// Create a new Release with all fields
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use debian_watch::Release;
+    ///
+    /// let release = Release::new_full(
+    ///     "1.0.0",
+    ///     "https://example.com/project-1.0.0.tar.gz",
+    ///     Some("https://example.com/project-1.0.0.tar.gz.asc".to_string()),
+    ///     Some("myproject_1.0.0.orig.tar.gz".to_string()),
+    ///     Some("1.0.0+dfsg".to_string()),
+    /// );
+    /// assert_eq!(release.version, "1.0.0");
+    /// assert_eq!(release.target_filename, Some("myproject_1.0.0.orig.tar.gz".to_string()));
+    /// ```
+    pub fn new_full(
+        version: impl Into<String>,
+        url: impl Into<String>,
+        pgpsigurl: Option<String>,
+        target_filename: Option<String>,
+        package_version: Option<String>,
+    ) -> Self {
+        Self {
+            version: version.into(),
+            url: url.into(),
+            pgpsigurl,
+            target_filename,
+            package_version,
+        }
+    }
+
+    /// Download the release tarball (async version)
+    ///
+    /// Downloads the tarball from the release URL.
+    /// Requires the 'discover' feature.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use debian_watch::Release;
+    ///
+    /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// let release = Release::new("1.0.0", "https://example.com/project-1.0.tar.gz", None);
+    /// let data = release.download().await?;
+    /// println!("Downloaded {} bytes", data.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(feature = "discover")]
+    pub async fn download(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let client = reqwest::Client::new();
+        let response = client.get(&self.url).send().await?;
+        let bytes = response.bytes().await?;
+        Ok(bytes.to_vec())
+    }
+
+    /// Download the release tarball (blocking version)
+    ///
+    /// Downloads the tarball from the release URL.
+    /// Requires both 'discover' and 'blocking' features.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use debian_watch::Release;
+    ///
+    /// let release = Release::new("1.0.0", "https://example.com/project-1.0.tar.gz", None);
+    /// let data = release.download_blocking()?;
+    /// println!("Downloaded {} bytes", data.len());
+    /// ```
+    #[cfg(all(feature = "discover", feature = "blocking"))]
+    pub fn download_blocking(&self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+        let client = reqwest::blocking::Client::new();
+        let response = client.get(&self.url).send()?;
+        let bytes = response.bytes()?;
+        Ok(bytes.to_vec())
     }
 }
 

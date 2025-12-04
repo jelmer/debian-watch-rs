@@ -522,6 +522,45 @@ impl WatchFile {
 
         Ok(all_releases)
     }
+
+    /// Add an entry to the watch file.
+    ///
+    /// Appends a new entry to the end of the watch file.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use debian_watch::{WatchFile, EntryBuilder};
+    ///
+    /// let mut wf = WatchFile::new(Some(4));
+    ///
+    /// // Add an entry using EntryBuilder
+    /// let entry = EntryBuilder::new("https://github.com/example/tags")
+    ///     .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+    ///     .build();
+    /// wf.add_entry(entry);
+    ///
+    /// // Or use the builder pattern directly
+    /// wf.add_entry(
+    ///     EntryBuilder::new("https://example.com/releases")
+    ///         .matching_pattern(".*/(\\d+\\.\\d+)\\.tar\\.gz")
+    ///         .opt("compression", "xz")
+    ///         .version_policy("debian")
+    ///         .build()
+    /// );
+    /// ```
+    pub fn add_entry(&mut self, entry: Entry) {
+        // Find the position to insert (after the last entry or after version)
+        let insert_pos = self.0.children_with_tokens().count();
+
+        // Detach the entry node from its current parent and get its green node
+        let entry_green = entry.0.green().into_owned();
+        let new_entry_node = SyntaxNode::new_root_mut(entry_green);
+
+        // Insert the entry at the end
+        self.0
+            .splice_children(insert_pos..insert_pos, vec![new_entry_node.into()]);
+    }
 }
 
 impl FromStr for WatchFile {
@@ -556,7 +595,174 @@ impl Version {
     }
 }
 
+/// Builder for creating new watchfile entries.
+///
+/// Provides a fluent API for constructing entries with various components.
+///
+/// # Examples
+///
+/// ```
+/// use debian_watch::EntryBuilder;
+///
+/// // Minimal entry with just URL and pattern
+/// let entry = EntryBuilder::new("https://github.com/example/tags")
+///     .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+///     .build();
+///
+/// // Entry with options
+/// let entry = EntryBuilder::new("https://github.com/example/tags")
+///     .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+///     .opt("compression", "xz")
+///     .flag("repack")
+///     .version_policy("debian")
+///     .script("uupdate")
+///     .build();
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct EntryBuilder {
+    url: Option<String>,
+    matching_pattern: Option<String>,
+    version_policy: Option<String>,
+    script: Option<String>,
+    opts: std::collections::HashMap<String, String>,
+}
+
+impl EntryBuilder {
+    /// Create a new entry builder with the specified URL.
+    pub fn new(url: impl Into<String>) -> Self {
+        EntryBuilder {
+            url: Some(url.into()),
+            matching_pattern: None,
+            version_policy: None,
+            script: None,
+            opts: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Set the matching pattern for the entry.
+    pub fn matching_pattern(mut self, pattern: impl Into<String>) -> Self {
+        self.matching_pattern = Some(pattern.into());
+        self
+    }
+
+    /// Set the version policy for the entry.
+    pub fn version_policy(mut self, policy: impl Into<String>) -> Self {
+        self.version_policy = Some(policy.into());
+        self
+    }
+
+    /// Set the script for the entry.
+    pub fn script(mut self, script: impl Into<String>) -> Self {
+        self.script = Some(script.into());
+        self
+    }
+
+    /// Add an option to the entry.
+    pub fn opt(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.opts.insert(key.into(), value.into());
+        self
+    }
+
+    /// Add a boolean flag option to the entry.
+    ///
+    /// Boolean options like "repack", "bare", "decompress" don't have values.
+    pub fn flag(mut self, key: impl Into<String>) -> Self {
+        self.opts.insert(key.into(), String::new());
+        self
+    }
+
+    /// Build the entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if no URL was provided.
+    pub fn build(self) -> Entry {
+        let url = self.url.expect("URL is required for entry");
+
+        let mut builder = GreenNodeBuilder::new();
+
+        builder.start_node(ENTRY.into());
+
+        // Add options list if provided
+        if !self.opts.is_empty() {
+            builder.start_node(OPTS_LIST.into());
+            builder.token(KEY.into(), "opts");
+            builder.token(EQUALS.into(), "=");
+
+            let mut first = true;
+            for (key, value) in self.opts.iter() {
+                if !first {
+                    builder.token(COMMA.into(), ",");
+                }
+                first = false;
+
+                builder.start_node(OPTION.into());
+                builder.token(KEY.into(), key);
+                if !value.is_empty() {
+                    builder.token(EQUALS.into(), "=");
+                    builder.token(VALUE.into(), value);
+                }
+                builder.finish_node();
+            }
+
+            builder.finish_node();
+            builder.token(WHITESPACE.into(), " ");
+        }
+
+        // Add URL (required)
+        builder.start_node(URL.into());
+        builder.token(VALUE.into(), &url);
+        builder.finish_node();
+
+        // Add matching pattern if provided
+        if let Some(pattern) = self.matching_pattern {
+            builder.token(WHITESPACE.into(), " ");
+            builder.start_node(MATCHING_PATTERN.into());
+            builder.token(VALUE.into(), &pattern);
+            builder.finish_node();
+        }
+
+        // Add version policy if provided
+        if let Some(policy) = self.version_policy {
+            builder.token(WHITESPACE.into(), " ");
+            builder.start_node(VERSION_POLICY.into());
+            builder.token(VALUE.into(), &policy);
+            builder.finish_node();
+        }
+
+        // Add script if provided
+        if let Some(script_val) = self.script {
+            builder.token(WHITESPACE.into(), " ");
+            builder.start_node(SCRIPT.into());
+            builder.token(VALUE.into(), &script_val);
+            builder.finish_node();
+        }
+
+        builder.token(NEWLINE.into(), "\n");
+        builder.finish_node();
+
+        Entry(SyntaxNode::new_root_mut(builder.finish()))
+    }
+}
+
 impl Entry {
+    /// Create a new entry builder.
+    ///
+    /// This is a convenience method that returns an `EntryBuilder`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use debian_watch::Entry;
+    ///
+    /// let entry = Entry::builder("https://github.com/example/tags")
+    ///     .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+    ///     .build();
+    /// ```
+    pub fn builder(url: impl Into<String>) -> EntryBuilder {
+        EntryBuilder::new(url)
+    }
+
     /// List of options
     pub fn option_list(&self) -> Option<OptionList> {
         self.0.children().find_map(OptionList::cast)
@@ -2812,4 +3018,216 @@ https://example.com/ .*
             .unwrap(),
         "https://example.com/archive/file.tar.gz"
     );
+}
+
+#[test]
+fn test_entry_builder_minimal() {
+    // Test creating a minimal entry with just URL and pattern
+    let entry = super::EntryBuilder::new("https://github.com/example/tags")
+        .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+        .build();
+
+    assert_eq!(entry.url(), "https://github.com/example/tags");
+    assert_eq!(
+        entry.matching_pattern().as_deref(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz")
+    );
+    assert_eq!(entry.version(), Ok(None));
+    assert_eq!(entry.script(), None);
+    assert!(entry.opts().is_empty());
+}
+
+#[test]
+fn test_entry_builder_url_only() {
+    // Test creating an entry with just URL
+    let entry = super::EntryBuilder::new("https://example.com/releases").build();
+
+    assert_eq!(entry.url(), "https://example.com/releases");
+    assert_eq!(entry.matching_pattern(), None);
+    assert_eq!(entry.version(), Ok(None));
+    assert_eq!(entry.script(), None);
+    assert!(entry.opts().is_empty());
+}
+
+#[test]
+fn test_entry_builder_with_all_fields() {
+    // Test creating an entry with all fields
+    let entry = super::EntryBuilder::new("https://github.com/example/tags")
+        .matching_pattern(".*/v?(\\d[\\d.]*)\\.tar\\.gz")
+        .version_policy("debian")
+        .script("uupdate")
+        .opt("compression", "xz")
+        .flag("repack")
+        .build();
+
+    assert_eq!(entry.url(), "https://github.com/example/tags");
+    assert_eq!(
+        entry.matching_pattern().as_deref(),
+        Some(".*/v?(\\d[\\d.]*)\\.tar\\.gz")
+    );
+    assert_eq!(entry.version(), Ok(Some(VersionPolicy::Debian)));
+    assert_eq!(entry.script(), Some("uupdate".into()));
+    assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
+    assert!(entry.has_option("repack"));
+    assert!(entry.repack());
+}
+
+#[test]
+fn test_entry_builder_multiple_options() {
+    // Test creating an entry with multiple options
+    let entry = super::EntryBuilder::new("https://example.com/tags")
+        .matching_pattern(".*/v?(\\d+\\.\\d+)\\.tar\\.gz")
+        .opt("compression", "xz")
+        .opt("dversionmangle", "s/\\+ds//")
+        .opt("repacksuffix", "+ds")
+        .build();
+
+    assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
+    assert_eq!(
+        entry.get_option("dversionmangle"),
+        Some("s/\\+ds//".to_string())
+    );
+    assert_eq!(entry.get_option("repacksuffix"), Some("+ds".to_string()));
+}
+
+#[test]
+fn test_entry_builder_via_entry() {
+    // Test using Entry::builder() convenience method
+    let entry = super::Entry::builder("https://github.com/example/tags")
+        .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+        .version_policy("debian")
+        .build();
+
+    assert_eq!(entry.url(), "https://github.com/example/tags");
+    assert_eq!(
+        entry.matching_pattern().as_deref(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz")
+    );
+    assert_eq!(entry.version(), Ok(Some(VersionPolicy::Debian)));
+}
+
+#[test]
+fn test_watchfile_add_entry_to_empty() {
+    // Test adding an entry to an empty watchfile
+    let mut wf = super::WatchFile::new(Some(4));
+
+    let entry = super::EntryBuilder::new("https://github.com/example/tags")
+        .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+        .build();
+
+    wf.add_entry(entry);
+
+    assert_eq!(wf.version(), 4);
+    assert_eq!(wf.entries().count(), 1);
+
+    let added_entry = wf.entries().next().unwrap();
+    assert_eq!(added_entry.url(), "https://github.com/example/tags");
+    assert_eq!(
+        added_entry.matching_pattern().as_deref(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz")
+    );
+}
+
+#[test]
+fn test_watchfile_add_multiple_entries() {
+    // Test adding multiple entries to a watchfile
+    let mut wf = super::WatchFile::new(Some(4));
+
+    wf.add_entry(
+        super::EntryBuilder::new("https://github.com/example1/tags")
+            .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+            .build(),
+    );
+
+    wf.add_entry(
+        super::EntryBuilder::new("https://github.com/example2/releases")
+            .matching_pattern(".*/(\\d+\\.\\d+)\\.tar\\.gz")
+            .opt("compression", "xz")
+            .build(),
+    );
+
+    assert_eq!(wf.entries().count(), 2);
+
+    let entries: Vec<_> = wf.entries().collect();
+    assert_eq!(entries[0].url(), "https://github.com/example1/tags");
+    assert_eq!(entries[1].url(), "https://github.com/example2/releases");
+    assert_eq!(entries[1].get_option("compression"), Some("xz".to_string()));
+}
+
+#[test]
+fn test_watchfile_add_entry_to_existing() {
+    // Test adding an entry to a watchfile that already has entries
+    let mut wf: super::WatchFile = r#"version=4
+https://example.com/old .*/v?(\\d\\S+)\\.tar\\.gz
+"#
+    .parse()
+    .unwrap();
+
+    assert_eq!(wf.entries().count(), 1);
+
+    wf.add_entry(
+        super::EntryBuilder::new("https://github.com/example/new")
+            .matching_pattern(".*/v?(\\d+\\.\\d+)\\.tar\\.gz")
+            .opt("compression", "xz")
+            .version_policy("debian")
+            .build(),
+    );
+
+    assert_eq!(wf.entries().count(), 2);
+
+    let entries: Vec<_> = wf.entries().collect();
+    assert_eq!(entries[0].url(), "https://example.com/old");
+    assert_eq!(entries[1].url(), "https://github.com/example/new");
+    assert_eq!(entries[1].version(), Ok(Some(VersionPolicy::Debian)));
+}
+
+#[test]
+fn test_entry_builder_formatting() {
+    // Test that the builder produces correctly formatted entries
+    let entry = super::EntryBuilder::new("https://github.com/example/tags")
+        .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+        .opt("compression", "xz")
+        .flag("repack")
+        .version_policy("debian")
+        .script("uupdate")
+        .build();
+
+    let entry_str = entry.to_string();
+
+    // Should start with opts=
+    assert!(entry_str.starts_with("opts="));
+    // Should contain the URL
+    assert!(entry_str.contains("https://github.com/example/tags"));
+    // Should contain the pattern
+    assert!(entry_str.contains(".*/v?(\\d\\S+)\\.tar\\.gz"));
+    // Should contain version policy
+    assert!(entry_str.contains("debian"));
+    // Should contain script
+    assert!(entry_str.contains("uupdate"));
+    // Should end with newline
+    assert!(entry_str.ends_with('\n'));
+}
+
+#[test]
+fn test_watchfile_add_entry_preserves_format() {
+    // Test that adding entries preserves the watchfile format
+    let mut wf = super::WatchFile::new(Some(4));
+
+    wf.add_entry(
+        super::EntryBuilder::new("https://github.com/example/tags")
+            .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
+            .build(),
+    );
+
+    let wf_str = wf.to_string();
+
+    // Should have version line
+    assert!(wf_str.starts_with("version=4\n"));
+    // Should have the entry
+    assert!(wf_str.contains("https://github.com/example/tags"));
+
+    // Parse it back and ensure it's still valid
+    let reparsed: super::WatchFile = wf_str.parse().unwrap();
+    assert_eq!(reparsed.version(), 4);
+    assert_eq!(reparsed.entries().count(), 1);
 }

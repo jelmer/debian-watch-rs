@@ -6,6 +6,9 @@ use crate::DEFAULT_VERSION;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
+#[cfg(feature = "discover")]
+use crate::discover::Discover;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ParseError(Vec<String>);
 
@@ -559,7 +562,7 @@ impl WatchFile {
     #[cfg(feature = "discover")]
     pub async fn uscan(
         &self,
-        package: impl Fn() -> String,
+        package: impl Fn() -> String + Send + Sync,
     ) -> Result<Vec<Vec<crate::Release>>, Box<dyn std::error::Error>> {
         let mut all_releases = Vec::new();
 
@@ -1052,198 +1055,6 @@ impl Entry {
         } else {
             Ok(url.to_string())
         }
-    }
-
-    /// Discover releases for this entry (async version)
-    ///
-    /// Fetches the URL and searches for version matches.
-    /// Requires the 'discover' feature.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use debian_watch::WatchFile;
-    /// # async fn example() {
-    /// let wf: WatchFile = r#"version=4
-    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
-    /// "#.parse().unwrap();
-    /// let entry = wf.entries().next().unwrap();
-    /// let releases = entry.discover(|| "mypackage".to_string()).await.unwrap();
-    /// for release in releases {
-    ///     println!("{}: {}", release.version, release.url);
-    /// }
-    /// # }
-    /// ```
-    #[cfg(feature = "discover")]
-    pub async fn discover(
-        &self,
-        package: impl FnOnce() -> String,
-    ) -> Result<Vec<crate::Release>, Box<dyn std::error::Error>> {
-        let url = self.format_url(package);
-        let user_agent = self
-            .user_agent()
-            .unwrap_or_else(|| crate::DEFAULT_USER_AGENT.to_string());
-        let searchmode = self.searchmode().unwrap_or(crate::SearchMode::Html);
-
-        let client = reqwest::Client::builder().user_agent(user_agent).build()?;
-
-        let response = client.get(url.as_str()).send().await?;
-        let body = response.bytes().await?;
-
-        // Apply pagemangle if present
-        let mangled_body = self.apply_pagemangle(&body)?;
-
-        let matching_pattern = self
-            .matching_pattern()
-            .ok_or("matching_pattern is required")?;
-
-        let package_name = String::new(); // Not used in search currently
-        let results = crate::search::search(
-            match searchmode {
-                crate::SearchMode::Html => "html",
-                crate::SearchMode::Plain => "plain",
-            },
-            std::io::Cursor::new(mangled_body.as_ref() as &[u8]),
-            &subst(&matching_pattern, || package_name.clone()),
-            &package_name,
-            url.as_str(),
-        )?;
-
-        let mut releases = Vec::new();
-        for (version, full_url) in results {
-            // Apply uversionmangle
-            let mangled_version = self.apply_uversionmangle(&version)?;
-
-            // Apply downloadurlmangle
-            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
-
-            // Apply pgpsigurlmangle if present
-            let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
-            } else {
-                None
-            };
-
-            // Apply filenamemangle if present
-            let target_filename = if self.filenamemangle().is_some() {
-                Some(self.apply_filenamemangle(&mangled_url)?)
-            } else {
-                None
-            };
-
-            // Apply oversionmangle if present
-            let package_version = if self.oversionmangle().is_some() {
-                Some(self.apply_oversionmangle(&mangled_version)?)
-            } else {
-                None
-            };
-
-            releases.push(crate::Release::new_full(
-                mangled_version,
-                mangled_url,
-                pgpsigurl,
-                target_filename,
-                package_version,
-            ));
-        }
-
-        Ok(releases)
-    }
-
-    /// Discover releases for this entry (blocking version)
-    ///
-    /// Fetches the URL and searches for version matches.
-    /// Requires both 'discover' and 'blocking' features.
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// # use debian_watch::WatchFile;
-    /// let wf: WatchFile = r#"version=4
-    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
-    /// "#.parse().unwrap();
-    /// let entry = wf.entries().next().unwrap();
-    /// let releases = entry.discover_blocking(|| "mypackage".to_string()).unwrap();
-    /// for release in releases {
-    ///     println!("{}: {}", release.version, release.url);
-    /// }
-    /// ```
-    #[cfg(all(feature = "discover", feature = "blocking"))]
-    pub fn discover_blocking(
-        &self,
-        package: impl FnOnce() -> String,
-    ) -> Result<Vec<crate::Release>, Box<dyn std::error::Error>> {
-        let url = self.format_url(package);
-        let user_agent = self
-            .user_agent()
-            .unwrap_or_else(|| crate::DEFAULT_USER_AGENT.to_string());
-        let searchmode = self.searchmode().unwrap_or(crate::SearchMode::Html);
-
-        let client = reqwest::blocking::Client::builder()
-            .user_agent(user_agent)
-            .build()?;
-
-        let response = client.get(url.as_str()).send()?;
-        let body = response.bytes()?;
-
-        // Apply pagemangle if present
-        let mangled_body = self.apply_pagemangle(&body)?;
-
-        let matching_pattern = self
-            .matching_pattern()
-            .ok_or("matching_pattern is required")?;
-
-        let package_name = String::new(); // Not used in search currently
-        let results = crate::search::search(
-            match searchmode {
-                crate::SearchMode::Html => "html",
-                crate::SearchMode::Plain => "plain",
-            },
-            std::io::Cursor::new(mangled_body.as_ref() as &[u8]),
-            &subst(&matching_pattern, || package_name.clone()),
-            &package_name,
-            url.as_str(),
-        )?;
-
-        let mut releases = Vec::new();
-        for (version, full_url) in results {
-            // Apply uversionmangle
-            let mangled_version = self.apply_uversionmangle(&version)?;
-
-            // Apply downloadurlmangle
-            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
-
-            // Apply pgpsigurlmangle if present
-            let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
-            } else {
-                None
-            };
-
-            // Apply filenamemangle if present
-            let target_filename = if self.filenamemangle().is_some() {
-                Some(self.apply_filenamemangle(&mangled_url)?)
-            } else {
-                None
-            };
-
-            // Apply oversionmangle if present
-            let package_version = if self.oversionmangle().is_some() {
-                Some(self.apply_oversionmangle(&mangled_version)?)
-            } else {
-                None
-            };
-
-            releases.push(crate::Release::new_full(
-                mangled_version,
-                mangled_url,
-                pgpsigurl,
-                target_filename,
-                package_version,
-            ));
-        }
-
-        Ok(releases)
     }
 
     /// Returns options set
@@ -2209,7 +2020,7 @@ impl crate::traits::WatchFileFormat for WatchFile {
         Box::new(WatchFile::entries(self))
     }
 
-    fn to_string(&self) -> String {
+    fn format_string(&self) -> String {
         ToString::to_string(self)
     }
 }

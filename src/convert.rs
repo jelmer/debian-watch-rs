@@ -1,7 +1,7 @@
 //! Conversion between watch file formats
 
 use crate::parse::{Entry, WatchFile};
-use crate::parse_v5::WatchFileV5;
+use crate::deb822::WatchFileV5;
 use crate::SyntaxKind::*;
 use deb822_lossless::{Deb822, Paragraph};
 

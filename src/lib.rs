@@ -25,12 +25,15 @@
 //! assert_eq!(entry.matching_pattern().as_deref(), Some(".*/v?(\\d\\S+)\\.tar\\.gz"));
 //! ```
 
-mod convert;
 mod lex;
 mod parse;
-mod parse_v5;
-mod types_v5;
 
+#[cfg(feature = "deb822")]
+mod convert;
+#[cfg(feature = "deb822")]
+pub mod deb822;
+#[cfg(feature = "discover")]
+pub mod discover;
 pub mod mangle;
 #[cfg(feature = "pgp")]
 pub mod pgp;
@@ -88,11 +91,14 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
-pub use crate::convert::{convert_to_v5, ConversionError};
 pub use crate::parse::Entry;
 pub use crate::parse::WatchFile;
 pub use crate::parse::{parse_watch_file, Parse};
-pub use crate::parse_v5::{EntryV5, WatchFileV5};
+
+#[cfg(feature = "deb822")]
+pub use crate::convert::{convert_to_v5, ConversionError};
+#[cfg(feature = "deb822")]
+pub use crate::deb822::{EntryV5, WatchFileV5};
 
 #[cfg(test)]
 mod tests {

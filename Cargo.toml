@@ -13,11 +13,13 @@ default = []
 discover = ["scraper", "reqwest"]
 blocking = ["reqwest?/blocking"]
 pgp = ["sequoia-openpgp", "anyhow"]
+deb822 = ["dep:deb822-lossless"]
 
 [dependencies]
 rowan = "0.16.1"
 m_lexer = "0.0.4"
 debversion = ">=0.4.7, <0.6"
+deb822-lossless = { version = "0.5", optional = true }
 url = "2.5.7"
 regex = "1"
 scraper = { version = "0.22", optional = true }

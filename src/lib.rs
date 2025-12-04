@@ -28,6 +28,8 @@
 mod lex;
 mod parse;
 
+#[cfg(feature = "deb822")]
+pub mod deb822;
 pub mod mangle;
 #[cfg(feature = "pgp")]
 pub mod pgp;

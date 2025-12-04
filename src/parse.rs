@@ -321,7 +321,9 @@ fn parse(text: &str) -> InternalParse {
                         break;
                     }
                     if self.current() == Some(COMMA) {
+                        self.builder.start_node(OPTION_SEPARATOR.into());
                         self.bump();
+                        self.builder.finish_node();
                     } else if !quoted {
                         break;
                     }
@@ -511,6 +513,72 @@ impl WatchFile {
             // Insert version node at the beginning
             self.0.splice_children(0..0, vec![new_version_node.into()]);
         }
+    }
+
+    /// Discover releases for all entries in the watch file (async version)
+    ///
+    /// Fetches URLs and searches for version matches for all entries.
+    /// Requires the 'discover' feature.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// # async fn example() {
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let all_releases = wf.uscan(|| "mypackage".to_string()).await.unwrap();
+    /// for (entry_idx, releases) in all_releases.iter().enumerate() {
+    ///     println!("Entry {}: {} releases found", entry_idx, releases.len());
+    /// }
+    /// # }
+    /// ```
+    #[cfg(feature = "discover")]
+    pub async fn uscan(
+        &self,
+        package: impl Fn() -> String,
+    ) -> Result<Vec<Vec<crate::Release>>, Box<dyn std::error::Error>> {
+        let mut all_releases = Vec::new();
+
+        for entry in self.entries() {
+            let releases = entry.discover(|| package()).await?;
+            all_releases.push(releases);
+        }
+
+        Ok(all_releases)
+    }
+
+    /// Discover releases for all entries in the watch file (blocking version)
+    ///
+    /// Fetches URLs and searches for version matches for all entries.
+    /// Requires both 'discover' and 'blocking' features.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let all_releases = wf.uscan_blocking(|| "mypackage".to_string()).unwrap();
+    /// for (entry_idx, releases) in all_releases.iter().enumerate() {
+    ///     println!("Entry {}: {} releases found", entry_idx, releases.len());
+    /// }
+    /// ```
+    #[cfg(all(feature = "discover", feature = "blocking"))]
+    pub fn uscan_blocking(
+        &self,
+        package: impl Fn() -> String,
+    ) -> Result<Vec<Vec<crate::Release>>, Box<dyn std::error::Error>> {
+        let mut all_releases = Vec::new();
+
+        for entry in self.entries() {
+            let releases = entry.discover_blocking(|| package())?;
+            all_releases.push(releases);
+        }
+
+        Ok(all_releases)
     }
 }
 
@@ -761,6 +829,361 @@ impl Entry {
         self.get_option("oversionmangle")
     }
 
+    /// Apply uversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=uversionmangle=s/\+ds// https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_uversionmangle("1.0+ds").unwrap(), "1.0");
+    /// ```
+    pub fn apply_uversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.uversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
+    /// Apply dversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=dversionmangle=s/\+dfsg$// https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0");
+    /// ```
+    pub fn apply_dversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.dversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
+    /// Apply oversionmangle to a version string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=oversionmangle=s/$/-1/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0-1");
+    /// ```
+    pub fn apply_oversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.oversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
+    /// Apply dirversionmangle to a directory path string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=dirversionmangle=s/v(\d)/$1/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+    /// ```
+    pub fn apply_dirversionmangle(
+        &self,
+        version: &str,
+    ) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.dirversionmangle() {
+            crate::mangle::apply_mangle(&vm, version)
+        } else {
+            Ok(version.to_string())
+        }
+    }
+
+    /// Apply filenamemangle to a URL or filename string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/mypackage-$1.tar.gz/ https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_filenamemangle("https://example.com/v1.0.tar.gz").unwrap(),
+    ///     "mypackage-1.0.tar.gz"
+    /// );
+    /// ```
+    pub fn apply_filenamemangle(&self, url: &str) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.filenamemangle() {
+            crate::mangle::apply_mangle(&vm, url)
+        } else {
+            Ok(url.to_string())
+        }
+    }
+
+    /// Apply pagemangle to page content bytes
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=pagemangle=s/&amp;/&/g https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+    ///     b"foo & bar"
+    /// );
+    /// ```
+    pub fn apply_pagemangle(&self, page: &[u8]) -> Result<Vec<u8>, crate::mangle::MangleError> {
+        if let Some(vm) = self.pagemangle() {
+            let page_str = String::from_utf8_lossy(page);
+            let mangled = crate::mangle::apply_mangle(&vm, &page_str)?;
+            Ok(mangled.into_bytes())
+        } else {
+            Ok(page.to_vec())
+        }
+    }
+
+    /// Apply downloadurlmangle to a URL string
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// opts=downloadurlmangle=s|/archive/|/download/| https://example.com/ .*
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// assert_eq!(
+    ///     entry.apply_downloadurlmangle("https://example.com/archive/file.tar.gz").unwrap(),
+    ///     "https://example.com/download/file.tar.gz"
+    /// );
+    /// ```
+    pub fn apply_downloadurlmangle(&self, url: &str) -> Result<String, crate::mangle::MangleError> {
+        if let Some(vm) = self.downloadurlmangle() {
+            crate::mangle::apply_mangle(&vm, url)
+        } else {
+            Ok(url.to_string())
+        }
+    }
+
+    /// Discover releases for this entry (async version)
+    ///
+    /// Fetches the URL and searches for version matches.
+    /// Requires the 'discover' feature.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// # async fn example() {
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// let releases = entry.discover(|| "mypackage".to_string()).await.unwrap();
+    /// for release in releases {
+    ///     println!("{}: {}", release.version, release.url);
+    /// }
+    /// # }
+    /// ```
+    #[cfg(feature = "discover")]
+    pub async fn discover(
+        &self,
+        package: impl FnOnce() -> String,
+    ) -> Result<Vec<crate::Release>, Box<dyn std::error::Error>> {
+        let url = self.format_url(package);
+        let user_agent = self
+            .user_agent()
+            .unwrap_or_else(|| crate::DEFAULT_USER_AGENT.to_string());
+        let searchmode = self.searchmode().unwrap_or(crate::SearchMode::Html);
+
+        let client = reqwest::Client::builder().user_agent(user_agent).build()?;
+
+        let response = client.get(url.as_str()).send().await?;
+        let body = response.bytes().await?;
+
+        // Apply pagemangle if present
+        let mangled_body = self.apply_pagemangle(&body)?;
+
+        let matching_pattern = self
+            .matching_pattern()
+            .ok_or("matching_pattern is required")?;
+
+        let package_name = String::new(); // Not used in search currently
+        let results = crate::search::search(
+            match searchmode {
+                crate::SearchMode::Html => "html",
+                crate::SearchMode::Plain => "plain",
+            },
+            std::io::Cursor::new(mangled_body.as_ref() as &[u8]),
+            &subst(&matching_pattern, || package_name.clone()),
+            &package_name,
+            url.as_str(),
+        )?;
+
+        let mut releases = Vec::new();
+        for (version, full_url) in results {
+            // Apply uversionmangle
+            let mangled_version = self.apply_uversionmangle(&version)?;
+
+            // Apply downloadurlmangle
+            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
+
+            // Apply pgpsigurlmangle if present
+            let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
+            } else {
+                None
+            };
+
+            // Apply filenamemangle if present
+            let target_filename = if self.filenamemangle().is_some() {
+                Some(self.apply_filenamemangle(&mangled_url)?)
+            } else {
+                None
+            };
+
+            // Apply oversionmangle if present
+            let package_version = if self.oversionmangle().is_some() {
+                Some(self.apply_oversionmangle(&mangled_version)?)
+            } else {
+                None
+            };
+
+            releases.push(crate::Release::new_full(
+                mangled_version,
+                mangled_url,
+                pgpsigurl,
+                target_filename,
+                package_version,
+            ));
+        }
+
+        Ok(releases)
+    }
+
+    /// Discover releases for this entry (blocking version)
+    ///
+    /// Fetches the URL and searches for version matches.
+    /// Requires both 'discover' and 'blocking' features.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// # use debian_watch::WatchFile;
+    /// let wf: WatchFile = r#"version=4
+    /// https://example.com/releases/ .*/v?(\d+\.\d+)\.tar\.gz
+    /// "#.parse().unwrap();
+    /// let entry = wf.entries().next().unwrap();
+    /// let releases = entry.discover_blocking(|| "mypackage".to_string()).unwrap();
+    /// for release in releases {
+    ///     println!("{}: {}", release.version, release.url);
+    /// }
+    /// ```
+    #[cfg(all(feature = "discover", feature = "blocking"))]
+    pub fn discover_blocking(
+        &self,
+        package: impl FnOnce() -> String,
+    ) -> Result<Vec<crate::Release>, Box<dyn std::error::Error>> {
+        let url = self.format_url(package);
+        let user_agent = self
+            .user_agent()
+            .unwrap_or_else(|| crate::DEFAULT_USER_AGENT.to_string());
+        let searchmode = self.searchmode().unwrap_or(crate::SearchMode::Html);
+
+        let client = reqwest::blocking::Client::builder()
+            .user_agent(user_agent)
+            .build()?;
+
+        let response = client.get(url.as_str()).send()?;
+        let body = response.bytes()?;
+
+        // Apply pagemangle if present
+        let mangled_body = self.apply_pagemangle(&body)?;
+
+        let matching_pattern = self
+            .matching_pattern()
+            .ok_or("matching_pattern is required")?;
+
+        let package_name = String::new(); // Not used in search currently
+        let results = crate::search::search(
+            match searchmode {
+                crate::SearchMode::Html => "html",
+                crate::SearchMode::Plain => "plain",
+            },
+            std::io::Cursor::new(mangled_body.as_ref() as &[u8]),
+            &subst(&matching_pattern, || package_name.clone()),
+            &package_name,
+            url.as_str(),
+        )?;
+
+        let mut releases = Vec::new();
+        for (version, full_url) in results {
+            // Apply uversionmangle
+            let mangled_version = self.apply_uversionmangle(&version)?;
+
+            // Apply downloadurlmangle
+            let mangled_url = self.apply_downloadurlmangle(&full_url)?;
+
+            // Apply pgpsigurlmangle if present
+            let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
+            } else {
+                None
+            };
+
+            // Apply filenamemangle if present
+            let target_filename = if self.filenamemangle().is_some() {
+                Some(self.apply_filenamemangle(&mangled_url)?)
+            } else {
+                None
+            };
+
+            // Apply oversionmangle if present
+            let package_version = if self.oversionmangle().is_some() {
+                Some(self.apply_oversionmangle(&mangled_version)?)
+            } else {
+                None
+            };
+
+            releases.push(crate::Release::new_full(
+                mangled_version,
+                mangled_url,
+                pgpsigurl,
+                target_filename,
+                package_version,
+            ));
+        }
+
+        Ok(releases)
+    }
+
     /// Returns options set
     pub fn opts(&self) -> std::collections::HashMap<String, String> {
         let mut options = std::collections::HashMap::new();
@@ -808,7 +1231,7 @@ impl Entry {
             .map(|it| it.url())
             .unwrap_or_else(|| {
                 // Fallback for entries without URL node (shouldn't happen with new parser)
-                self.items().next().unwrap_or_default()
+                self.items().next().unwrap()
             })
     }
 
@@ -971,6 +1394,220 @@ impl Entry {
         }
         // TODO: else insert new node after VERSION_POLICY (or MATCHING_PATTERN/URL if no policy)
     }
+
+    /// Set the URL of the entry.
+    pub fn set_url(&mut self, new_url: &str) {
+        // Build the new URL node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(URL.into());
+        builder.token(VALUE.into(), new_url);
+        builder.finish_node();
+        let new_url_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_url_node = SyntaxNode::new_root_mut(new_url_green);
+
+        // Find existing URL node position (need to use children_with_tokens for correct indexing)
+        let url_pos = self
+            .0
+            .children_with_tokens()
+            .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == URL));
+
+        if let Some(pos) = url_pos {
+            // Replace existing URL node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_url_node.into()]);
+        }
+    }
+
+    /// Set the matching pattern of the entry.
+    ///
+    /// TODO: This currently only replaces an existing matching pattern.
+    /// If the entry doesn't have a matching pattern, this method does nothing.
+    /// Future implementation should insert the node at the correct position.
+    pub fn set_matching_pattern(&mut self, new_pattern: &str) {
+        // Build the new MATCHING_PATTERN node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(MATCHING_PATTERN.into());
+        builder.token(VALUE.into(), new_pattern);
+        builder.finish_node();
+        let new_pattern_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_pattern_node = SyntaxNode::new_root_mut(new_pattern_green);
+
+        // Find existing MATCHING_PATTERN node position
+        let pattern_pos = self.0.children_with_tokens().position(
+            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == MATCHING_PATTERN),
+        );
+
+        if let Some(pos) = pattern_pos {
+            // Replace existing MATCHING_PATTERN node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_pattern_node.into()]);
+        }
+        // TODO: else insert new node after URL
+    }
+
+    /// Set the version policy of the entry.
+    ///
+    /// TODO: This currently only replaces an existing version policy.
+    /// If the entry doesn't have a version policy, this method does nothing.
+    /// Future implementation should insert the node at the correct position.
+    pub fn set_version_policy(&mut self, new_policy: &str) {
+        // Build the new VERSION_POLICY node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(VERSION_POLICY.into());
+        // Version policy can be KEY (e.g., "debian") or VALUE
+        builder.token(VALUE.into(), new_policy);
+        builder.finish_node();
+        let new_policy_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_policy_node = SyntaxNode::new_root_mut(new_policy_green);
+
+        // Find existing VERSION_POLICY node position
+        let policy_pos = self.0.children_with_tokens().position(
+            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == VERSION_POLICY),
+        );
+
+        if let Some(pos) = policy_pos {
+            // Replace existing VERSION_POLICY node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_policy_node.into()]);
+        }
+        // TODO: else insert new node after MATCHING_PATTERN (or URL if no pattern)
+    }
+
+    /// Set the script of the entry.
+    ///
+    /// TODO: This currently only replaces an existing script.
+    /// If the entry doesn't have a script, this method does nothing.
+    /// Future implementation should insert the node at the correct position.
+    pub fn set_script(&mut self, new_script: &str) {
+        // Build the new SCRIPT node
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(SCRIPT.into());
+        // Script can be KEY (e.g., "uupdate") or VALUE
+        builder.token(VALUE.into(), new_script);
+        builder.finish_node();
+        let new_script_green = builder.finish();
+
+        // Create a syntax node (splice_children will detach and reattach it)
+        let new_script_node = SyntaxNode::new_root_mut(new_script_green);
+
+        // Find existing SCRIPT node position
+        let script_pos = self
+            .0
+            .children_with_tokens()
+            .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == SCRIPT));
+
+        if let Some(pos) = script_pos {
+            // Replace existing SCRIPT node
+            self.0
+                .splice_children(pos..pos + 1, vec![new_script_node.into()]);
+        }
+        // TODO: else insert new node after VERSION_POLICY (or MATCHING_PATTERN/URL if no policy)
+    }
+
+    /// Set or update an option value.
+    ///
+    /// If the option already exists, it will be updated with the new value.
+    /// If the option doesn't exist, it will be added to the options list.
+    /// If there's no options list, one will be created.
+    pub fn set_opt(&mut self, key: &str, value: &str) {
+        // Find the OPTS_LIST position in Entry
+        let opts_pos = self.0.children_with_tokens().position(
+            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == OPTS_LIST),
+        );
+
+        if let Some(_opts_idx) = opts_pos {
+            if let Some(mut ol) = self.option_list() {
+                // Find if the option already exists
+                if let Some(mut opt) = ol.find_option(key) {
+                    // Update the existing option's value
+                    opt.set_value(value);
+                    // Mutations should propagate automatically - no need to replace
+                } else {
+                    // Add new option
+                    ol.add_option(key, value);
+                    // Mutations should propagate automatically - no need to replace
+                }
+            }
+        } else {
+            // Create a new options list
+            let mut builder = GreenNodeBuilder::new();
+            builder.start_node(OPTS_LIST.into());
+            builder.token(KEY.into(), "opts");
+            builder.token(EQUALS.into(), "=");
+            builder.start_node(OPTION.into());
+            builder.token(KEY.into(), key);
+            builder.token(EQUALS.into(), "=");
+            builder.token(VALUE.into(), value);
+            builder.finish_node();
+            builder.finish_node();
+            let new_opts_green = builder.finish();
+            let new_opts_node = SyntaxNode::new_root_mut(new_opts_green);
+
+            // Find position to insert (before URL if it exists, otherwise at start)
+            let url_pos = self
+                .0
+                .children_with_tokens()
+                .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == URL));
+
+            if let Some(url_idx) = url_pos {
+                // Insert options list and a space before the URL
+                // Build a parent node containing both space and whitespace to extract from
+                let mut combined_builder = GreenNodeBuilder::new();
+                combined_builder.start_node(ROOT.into()); // Temporary parent
+                combined_builder.token(WHITESPACE.into(), " ");
+                combined_builder.finish_node();
+                let temp_green = combined_builder.finish();
+                let temp_root = SyntaxNode::new_root_mut(temp_green);
+                let space_element = temp_root.children_with_tokens().next().unwrap();
+
+                self.0
+                    .splice_children(url_idx..url_idx, vec![new_opts_node.into(), space_element]);
+            } else {
+                self.0.splice_children(0..0, vec![new_opts_node.into()]);
+            }
+        }
+    }
+
+    /// Delete an option.
+    ///
+    /// Removes the option with the specified key from the options list.
+    /// If the option doesn't exist, this method does nothing.
+    /// If deleting the option results in an empty options list, the entire
+    /// opts= declaration is removed.
+    pub fn del_opt(&mut self, key: &str) {
+        if let Some(mut ol) = self.option_list() {
+            let option_count = ol.0.children().filter(|n| n.kind() == OPTION).count();
+
+            if option_count == 1 && ol.has_option(key) {
+                // This is the last option, remove the entire OPTS_LIST from Entry
+                let opts_pos = self.0.children().position(|node| node.kind() == OPTS_LIST);
+
+                if let Some(opts_idx) = opts_pos {
+                    // Remove the OPTS_LIST
+                    self.0.splice_children(opts_idx..opts_idx + 1, vec![]);
+
+                    // Remove any leading whitespace/continuation that was after the OPTS_LIST
+                    while self.0.children_with_tokens().next().map_or(false, |e| {
+                        matches!(
+                            e,
+                            SyntaxElement::Token(t) if t.kind() == WHITESPACE || t.kind() == CONTINUATION
+                        )
+                    }) {
+                        self.0.splice_children(0..1, vec![]);
+                    }
+                }
+            } else {
+                // Defer to OptionList to remove the option
+                ol.remove_option(key);
+            }
+        }
+    }
 }
 
 const SUBSTITUTIONS: &[(&str, &str)] = &[
@@ -1026,6 +1663,14 @@ fn test_subst() {
     assert_eq!(subst("@PACKAGE@", || "dulwich".to_string()), "dulwich");
 }
 
+impl std::fmt::Debug for OptionList {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OptionList")
+            .field("text", &self.0.text().to_string())
+            .finish()
+    }
+}
+
 impl OptionList {
     fn children(&self) -> impl Iterator<Item = _Option> + '_ {
         self.0.children().filter_map(_Option::cast)
@@ -1054,6 +1699,53 @@ impl OptionList {
                 None
             }
         })
+    }
+
+    /// Find an option by key.
+    fn find_option(&self, key: &str) -> Option<_Option> {
+        self.children()
+            .find(|opt| opt.key().as_deref() == Some(key))
+    }
+
+    /// Add a new option to the end of the options list.
+    fn add_option(&mut self, key: &str, value: &str) {
+        let option_count = self.0.children().filter(|n| n.kind() == OPTION).count();
+
+        // Build a structure containing separator (if needed) + option wrapped in a temporary parent
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(ROOT.into()); // Temporary parent
+
+        if option_count > 0 {
+            builder.start_node(OPTION_SEPARATOR.into());
+            builder.token(COMMA.into(), ",");
+            builder.finish_node();
+        }
+
+        builder.start_node(OPTION.into());
+        builder.token(KEY.into(), key);
+        builder.token(EQUALS.into(), "=");
+        builder.token(VALUE.into(), value);
+        builder.finish_node();
+
+        builder.finish_node(); // Close temporary parent
+        let combined_green = builder.finish();
+
+        // Create a temporary root to extract children from
+        let temp_root = SyntaxNode::new_root_mut(combined_green);
+        let new_children: Vec<_> = temp_root.children_with_tokens().collect();
+
+        let insert_pos = self.0.children_with_tokens().count();
+        self.0.splice_children(insert_pos..insert_pos, new_children);
+    }
+
+    /// Remove an option by key. Returns true if an option was removed.
+    fn remove_option(&mut self, key: &str) -> bool {
+        if let Some(mut opt) = self.find_option(key) {
+            opt.remove();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -1088,6 +1780,222 @@ impl _Option {
             })
             .nth(1)
     }
+
+    /// Set the value of the option.
+    pub fn set_value(&mut self, new_value: &str) {
+        let key = self.key().expect("Option must have a key");
+
+        // Build a new OPTION node with the updated value
+        let mut builder = GreenNodeBuilder::new();
+        builder.start_node(OPTION.into());
+        builder.token(KEY.into(), &key);
+        builder.token(EQUALS.into(), "=");
+        builder.token(VALUE.into(), new_value);
+        builder.finish_node();
+        let new_option_green = builder.finish();
+        let new_option_node = SyntaxNode::new_root_mut(new_option_green);
+
+        // Replace this option in the parent OptionList
+        if let Some(parent) = self.0.parent() {
+            let idx = self.0.index();
+            parent.splice_children(idx..idx + 1, vec![new_option_node.into()]);
+        }
+    }
+
+    /// Remove this option and its associated separator from the parent OptionList.
+    pub fn remove(&mut self) {
+        // Find adjacent separator to remove before detaching this node
+        let next_sep = self
+            .0
+            .next_sibling()
+            .filter(|n| n.kind() == OPTION_SEPARATOR);
+        let prev_sep = self
+            .0
+            .prev_sibling()
+            .filter(|n| n.kind() == OPTION_SEPARATOR);
+
+        // Detach separator first if it exists
+        if let Some(sep) = next_sep {
+            sep.detach();
+        } else if let Some(sep) = prev_sep {
+            sep.detach();
+        }
+
+        // Now detach the option itself
+        self.0.detach();
+    }
+}
+
+impl Url {
+    /// Returns the URL string.
+    pub fn url(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    if token.kind() == VALUE {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+impl MatchingPattern {
+    /// Returns the matching pattern string.
+    pub fn pattern(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    if token.kind() == VALUE {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+impl VersionPolicyNode {
+    /// Returns the version policy string.
+    pub fn policy(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    // Can be KEY (e.g., "debian") or VALUE
+                    if token.kind() == VALUE || token.kind() == KEY {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+impl ScriptNode {
+    /// Returns the script string.
+    pub fn script(&self) -> String {
+        self.0
+            .children_with_tokens()
+            .find_map(|it| match it {
+                SyntaxElement::Token(token) => {
+                    // Can be KEY (e.g., "uupdate") or VALUE
+                    if token.kind() == VALUE || token.kind() == KEY {
+                        Some(token.text().to_string())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .unwrap()
+    }
+}
+
+#[test]
+fn test_entry_node_structure() {
+    // Test that entries properly use the new node types
+    let wf: super::WatchFile = r#"version=4
+opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#
+    .parse()
+    .unwrap();
+
+    let entry = wf.entries().next().unwrap();
+
+    // Verify URL node exists and works
+    assert_eq!(entry.0.children().find(|n| n.kind() == URL).is_some(), true);
+    assert_eq!(entry.url(), "https://example.com/releases");
+
+    // Verify MATCHING_PATTERN node exists and works
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == MATCHING_PATTERN)
+            .is_some(),
+        true
+    );
+    assert_eq!(
+        entry.matching_pattern(),
+        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
+    );
+
+    // Verify VERSION_POLICY node exists and works
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == VERSION_POLICY)
+            .is_some(),
+        true
+    );
+    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
+
+    // Verify SCRIPT node exists and works
+    assert_eq!(
+        entry.0.children().find(|n| n.kind() == SCRIPT).is_some(),
+        true
+    );
+    assert_eq!(entry.script(), Some("uupdate".into()));
+}
+
+#[test]
+fn test_entry_node_structure_partial() {
+    // Test entry with only URL and pattern (no version or script)
+    let wf: super::WatchFile = r#"version=4
+https://github.com/example/tags .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let entry = wf.entries().next().unwrap();
+
+    // Should have URL and MATCHING_PATTERN nodes
+    assert_eq!(entry.0.children().find(|n| n.kind() == URL).is_some(), true);
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == MATCHING_PATTERN)
+            .is_some(),
+        true
+    );
+
+    // Should NOT have VERSION_POLICY or SCRIPT nodes
+    assert_eq!(
+        entry
+            .0
+            .children()
+            .find(|n| n.kind() == VERSION_POLICY)
+            .is_some(),
+        false
+    );
+    assert_eq!(
+        entry.0.children().find(|n| n.kind() == SCRIPT).is_some(),
+        false
+    );
+
+    // Verify accessors work correctly
+    assert_eq!(entry.url(), "https://github.com/example/tags");
+    assert_eq!(
+        entry.matching_pattern(),
+        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
+    );
+    assert_eq!(entry.version(), Ok(None));
+    assert_eq!(entry.script(), None);
 }
 
 impl Url {
@@ -1285,7 +2193,8 @@ opts=bare,filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/syncthing-gtk-$1\.tar\.gz/ \
       EQUALS@14..15 "="
       OPTION@15..19
         KEY@15..19 "bare"
-      COMMA@19..20 ","
+      OPTION_SEPARATOR@19..20
+        COMMA@19..20 ","
       OPTION@20..86
         KEY@20..34 "filenamemangle"
         EQUALS@34..35 "="
@@ -1730,6 +2639,205 @@ opts="bare, filenamemangle=blah" \
 }
 
 #[test]
+fn test_set_opt_update_existing() {
+    // Test updating an existing option
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    entry.set_opt("foo", "updated");
+    assert_eq!(entry.get_option("foo"), Some("updated".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=updated,bar=baz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_set_opt_add_new() {
+    // Test adding a new option to existing options
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), None);
+
+    entry.set_opt("bar", "baz");
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=blah,bar=baz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_set_opt_create_options_list() {
+    // Test creating a new options list when none exists
+    let wf: super::WatchFile = r#"version=4
+https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.option_list(), None);
+
+    entry.set_opt("compression", "xz");
+    assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=compression=xz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_single() {
+    // Test removing a single option from multiple options
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz,qux=quux https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+    assert_eq!(entry.get_option("qux"), Some("quux".to_string()));
+
+    entry.del_opt("bar");
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), None);
+    assert_eq!(entry.get_option("qux"), Some("quux".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=blah,qux=quux https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_first() {
+    // Test removing the first option
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    entry.del_opt("foo");
+    assert_eq!(entry.get_option("foo"), None);
+    assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=bar=baz https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_last() {
+    // Test removing the last option
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    entry.del_opt("bar");
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+    assert_eq!(entry.get_option("bar"), None);
+
+    // Verify the exact serialized output
+    assert_eq!(
+        entry.to_string(),
+        "opts=foo=blah https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_remove_only_option() {
+    // Test removing the only option (should remove entire opts list)
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
+
+    entry.del_opt("foo");
+    assert_eq!(entry.get_option("foo"), None);
+    assert_eq!(entry.option_list(), None);
+
+    // Verify the exact serialized output (opts should be gone)
+    assert_eq!(
+        entry.to_string(),
+        "https://example.com/releases .*/v?(\\d\\S+)\\.tar\\.gz\n"
+    );
+}
+
+#[test]
+fn test_del_opt_nonexistent() {
+    // Test deleting a non-existent option (should do nothing)
+    let wf: super::WatchFile = r#"version=4
+opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+    let original = entry.to_string();
+
+    entry.del_opt("nonexistent");
+    assert_eq!(entry.to_string(), original);
+}
+
+#[test]
+fn test_set_opt_multiple_operations() {
+    // Test multiple set_opt operations
+    let wf: super::WatchFile = r#"version=4
+https://example.com/releases .*/v?(\d\S+)\.tar\.gz
+"#
+    .parse()
+    .unwrap();
+
+    let mut entry = wf.entries().next().unwrap();
+
+    entry.set_opt("compression", "xz");
+    entry.set_opt("repack", "");
+    entry.set_opt("dversionmangle", "s/\\+ds//");
+
+    assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
+    assert_eq!(
+        entry.get_option("dversionmangle"),
+        Some("s/\\+ds//".to_string())
+    );
+}
+
+#[test]
 fn test_set_matching_pattern() {
     // Test setting matching pattern on a simple entry
     let wf: super::WatchFile = r#"version=4
@@ -1918,5 +3026,245 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz 
     assert_eq!(
         entry.to_string(),
         "opts=compression=xz https://example.com/releases (?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz debian custom-script.sh\n"
+    );
+}
+
+#[test]
+fn test_apply_dversionmangle() {
+    // Test basic dversionmangle
+    let wf: super::WatchFile = r#"version=4
+opts=dversionmangle=s/\+dfsg$// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0");
+    assert_eq!(entry.apply_dversionmangle("1.0").unwrap(), "1.0");
+
+    // Test with versionmangle (fallback)
+    let wf: super::WatchFile = r#"version=4
+opts=versionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("v1.0").unwrap(), "1.0");
+
+    // Test with both dversionmangle and versionmangle (dversionmangle takes precedence)
+    let wf: super::WatchFile = r#"version=4
+opts=dversionmangle=s/\+ds//,versionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+ds").unwrap(), "1.0");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dversionmangle("1.0+dfsg").unwrap(), "1.0+dfsg");
+}
+
+#[test]
+fn test_apply_oversionmangle() {
+    // Test basic oversionmangle - adding suffix
+    let wf: super::WatchFile = r#"version=4
+opts=oversionmangle=s/$/-1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0-1");
+    assert_eq!(entry.apply_oversionmangle("2.5.3").unwrap(), "2.5.3-1");
+
+    // Test oversionmangle for adding +dfsg suffix
+    let wf: super::WatchFile = r#"version=4
+opts=oversionmangle=s/$/.dfsg/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0.dfsg");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_oversionmangle("1.0").unwrap(), "1.0");
+}
+
+#[test]
+fn test_apply_dirversionmangle() {
+    // Test basic dirversionmangle - removing 'v' prefix
+    let wf: super::WatchFile = r#"version=4
+opts=dirversionmangle=s/^v// https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+    assert_eq!(entry.apply_dirversionmangle("v2.5.3").unwrap(), "2.5.3");
+
+    // Test dirversionmangle with capture groups
+    let wf: super::WatchFile = r#"version=4
+opts=dirversionmangle=s/v(\d)/$1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "1.0");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_dirversionmangle("v1.0").unwrap(), "v1.0");
+}
+
+#[test]
+fn test_apply_filenamemangle() {
+    // Test filenamemangle to generate tarball filename
+    let wf: super::WatchFile = r#"version=4
+opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/mypackage-$1.tar.gz/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/v1.0.tar.gz")
+            .unwrap(),
+        "mypackage-1.0.tar.gz"
+    );
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/2.5.3.tar.gz")
+            .unwrap(),
+        "mypackage-2.5.3.tar.gz"
+    );
+
+    // Test filenamemangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=filenamemangle=s/.*\/(.*)/$1/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/path/to/file.tar.gz")
+            .unwrap(),
+        "file.tar.gz"
+    );
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_filenamemangle("https://example.com/file.tar.gz")
+            .unwrap(),
+        "https://example.com/file.tar.gz"
+    );
+}
+
+#[test]
+fn test_apply_pagemangle() {
+    // Test pagemangle to decode HTML entities
+    let wf: super::WatchFile = r#"version=4
+opts=pagemangle=s/&amp;/&/g https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+        b"foo & bar"
+    );
+    assert_eq!(
+        entry
+            .apply_pagemangle(b"&amp; foo &amp; bar &amp;")
+            .unwrap(),
+        b"& foo & bar &"
+    );
+
+    // Test pagemangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=pagemangle=s/<[^>]+>//g https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(entry.apply_pagemangle(b"<div>text</div>").unwrap(), b"text");
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry.apply_pagemangle(b"foo &amp; bar").unwrap(),
+        b"foo &amp; bar"
+    );
+}
+
+#[test]
+fn test_apply_downloadurlmangle() {
+    // Test downloadurlmangle to change URL path
+    let wf: super::WatchFile = r#"version=4
+opts=downloadurlmangle=s|/archive/|/download/| https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://example.com/archive/file.tar.gz")
+            .unwrap(),
+        "https://example.com/download/file.tar.gz"
+    );
+
+    // Test downloadurlmangle with different pattern
+    let wf: super::WatchFile = r#"version=4
+opts=downloadurlmangle=s/github\.com/raw.githubusercontent.com/ https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://github.com/user/repo/file.tar.gz")
+            .unwrap(),
+        "https://raw.githubusercontent.com/user/repo/file.tar.gz"
+    );
+
+    // Test without any mangle options
+    let wf: super::WatchFile = r#"version=4
+https://example.com/ .*
+"#
+    .parse()
+    .unwrap();
+    let entry = wf.entries().next().unwrap();
+    assert_eq!(
+        entry
+            .apply_downloadurlmangle("https://example.com/archive/file.tar.gz")
+            .unwrap(),
+        "https://example.com/archive/file.tar.gz"
     );
 }

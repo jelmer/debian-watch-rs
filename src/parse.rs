@@ -443,12 +443,34 @@ macro_rules! ast_node {
 ast_node!(WatchFile, ROOT);
 ast_node!(Version, VERSION);
 ast_node!(Entry, ENTRY);
-ast_node!(OptionList, OPTS_LIST);
 ast_node!(_Option, OPTION);
 ast_node!(Url, URL);
 ast_node!(MatchingPattern, MATCHING_PATTERN);
 ast_node!(VersionPolicyNode, VERSION_POLICY);
 ast_node!(ScriptNode, SCRIPT);
+
+// OptionList is manually defined to have a custom Debug impl
+#[derive(Clone, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+/// A node in the syntax tree for OptionList
+pub struct OptionList(SyntaxNode);
+
+impl OptionList {
+    #[allow(unused)]
+    fn cast(node: SyntaxNode) -> Option<Self> {
+        if node.kind() == OPTS_LIST {
+            Some(Self(node))
+        } else {
+            None
+        }
+    }
+}
+
+impl std::fmt::Display for OptionList {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", self.0.text())
+    }
+}
 
 impl WatchFile {
     /// Access the underlying syntax node (needed for conversion)
@@ -648,12 +670,22 @@ impl Entry {
     }
 
     /// Component type
-    pub fn ctype(&self) -> Result<Option<ComponentType>, crate::types::ParseError> {
+    pub fn ctype(&self) -> Result<Option<ComponentType>, ()> {
+        self.try_ctype().map_err(|_| ())
+    }
+
+    /// Component type with detailed error information
+    pub fn try_ctype(&self) -> Result<Option<ComponentType>, crate::types::ParseError> {
         self.get_option("ctype").map(|s| s.parse()).transpose()
     }
 
     /// Compression method
-    pub fn compression(&self) -> Result<Option<Compression>, crate::types::ParseError> {
+    pub fn compression(&self) -> Result<Option<Compression>, ()> {
+        self.try_compression().map_err(|_| ())
+    }
+
+    /// Compression method with detailed error information
+    pub fn try_compression(&self) -> Result<Option<Compression>, crate::types::ParseError> {
         self.get_option("compression")
             .map(|s| s.parse())
             .transpose()
@@ -670,7 +702,12 @@ impl Entry {
     }
 
     /// Retrieve the mode of the watch file entry.
-    pub fn mode(&self) -> Result<Mode, crate::types::ParseError> {
+    pub fn mode(&self) -> Result<Mode, ()> {
+        self.try_mode().map_err(|_| ())
+    }
+
+    /// Retrieve the mode of the watch file entry with detailed error information.
+    pub fn try_mode(&self) -> Result<Mode, crate::types::ParseError> {
         Ok(self
             .get_option("mode")
             .map(|s| s.parse())
@@ -679,7 +716,12 @@ impl Entry {
     }
 
     /// Return the git pretty mode
-    pub fn pretty(&self) -> Result<Pretty, crate::types::ParseError> {
+    pub fn pretty(&self) -> Result<Pretty, ()> {
+        self.try_pretty().map_err(|_| ())
+    }
+
+    /// Return the git pretty mode with detailed error information
+    pub fn try_pretty(&self) -> Result<Pretty, crate::types::ParseError> {
         Ok(self
             .get_option("pretty")
             .map(|s| s.parse())
@@ -694,7 +736,12 @@ impl Entry {
     }
 
     /// Return the git export mode
-    pub fn gitexport(&self) -> Result<GitExport, crate::types::ParseError> {
+    pub fn gitexport(&self) -> Result<GitExport, ()> {
+        self.try_gitexport().map_err(|_| ())
+    }
+
+    /// Return the git export mode with detailed error information
+    pub fn try_gitexport(&self) -> Result<GitExport, crate::types::ParseError> {
         Ok(self
             .get_option("gitexport")
             .map(|s| s.parse())
@@ -703,7 +750,12 @@ impl Entry {
     }
 
     /// Return the git mode
-    pub fn gitmode(&self) -> Result<GitMode, crate::types::ParseError> {
+    pub fn gitmode(&self) -> Result<GitMode, ()> {
+        self.try_gitmode().map_err(|_| ())
+    }
+
+    /// Return the git mode with detailed error information
+    pub fn try_gitmode(&self) -> Result<GitMode, crate::types::ParseError> {
         Ok(self
             .get_option("gitmode")
             .map(|s| s.parse())
@@ -712,7 +764,12 @@ impl Entry {
     }
 
     /// Return the pgp mode
-    pub fn pgpmode(&self) -> Result<PgpMode, crate::types::ParseError> {
+    pub fn pgpmode(&self) -> Result<PgpMode, ()> {
+        self.try_pgpmode().map_err(|_| ())
+    }
+
+    /// Return the pgp mode with detailed error information
+    pub fn try_pgpmode(&self) -> Result<PgpMode, crate::types::ParseError> {
         Ok(self
             .get_option("pgpmode")
             .map(|s| s.parse())
@@ -721,7 +778,12 @@ impl Entry {
     }
 
     /// Return the search mode
-    pub fn searchmode(&self) -> Result<SearchMode, crate::types::ParseError> {
+    pub fn searchmode(&self) -> Result<SearchMode, ()> {
+        self.try_searchmode().map_err(|_| ())
+    }
+
+    /// Return the search mode with detailed error information
+    pub fn try_searchmode(&self) -> Result<SearchMode, crate::types::ParseError> {
         Ok(self
             .get_option("searchmode")
             .map(|s| s.parse())
@@ -1248,15 +1310,16 @@ impl Entry {
     }
 
     /// Returns the version policy
-    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, crate::types::ParseError> {
+    pub fn version(&self) -> Result<Option<crate::VersionPolicy>, String> {
         self.0
             .children()
             .find_map(VersionPolicyNode::cast)
             .map(|it| it.policy().parse())
             .transpose()
+            .map_err(|e: crate::types::ParseError| e.to_string())
             .or_else(|_e| {
                 // Fallback for entries without VERSION_POLICY node
-                self.items().nth(2).map(|it| it.parse()).transpose()
+                self.items().nth(2).map(|it| it.parse()).transpose().map_err(|e: crate::types::ParseError| e.to_string())
             })
     }
 
@@ -1273,126 +1336,8 @@ impl Entry {
     }
 
     /// Replace all substitutions and return the resulting URL.
-    pub fn format_url(
-        &self,
-        package: impl FnOnce() -> String,
-    ) -> Result<url::Url, url::ParseError> {
-        subst(self.url().as_str(), package).parse()
-    }
-
-    /// Set the URL of the entry.
-    pub fn set_url(&mut self, new_url: &str) {
-        // Build the new URL node
-        let mut builder = GreenNodeBuilder::new();
-        builder.start_node(URL.into());
-        builder.token(VALUE.into(), new_url);
-        builder.finish_node();
-        let new_url_green = builder.finish();
-
-        // Create a syntax node (splice_children will detach and reattach it)
-        let new_url_node = SyntaxNode::new_root_mut(new_url_green);
-
-        // Find existing URL node position (need to use children_with_tokens for correct indexing)
-        let url_pos = self
-            .0
-            .children_with_tokens()
-            .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == URL));
-
-        if let Some(pos) = url_pos {
-            // Replace existing URL node
-            self.0
-                .splice_children(pos..pos + 1, vec![new_url_node.into()]);
-        }
-    }
-
-    /// Set the matching pattern of the entry.
-    ///
-    /// TODO: This currently only replaces an existing matching pattern.
-    /// If the entry doesn't have a matching pattern, this method does nothing.
-    /// Future implementation should insert the node at the correct position.
-    pub fn set_matching_pattern(&mut self, new_pattern: &str) {
-        // Build the new MATCHING_PATTERN node
-        let mut builder = GreenNodeBuilder::new();
-        builder.start_node(MATCHING_PATTERN.into());
-        builder.token(VALUE.into(), new_pattern);
-        builder.finish_node();
-        let new_pattern_green = builder.finish();
-
-        // Create a syntax node (splice_children will detach and reattach it)
-        let new_pattern_node = SyntaxNode::new_root_mut(new_pattern_green);
-
-        // Find existing MATCHING_PATTERN node position
-        let pattern_pos = self.0.children_with_tokens().position(
-            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == MATCHING_PATTERN),
-        );
-
-        if let Some(pos) = pattern_pos {
-            // Replace existing MATCHING_PATTERN node
-            self.0
-                .splice_children(pos..pos + 1, vec![new_pattern_node.into()]);
-        }
-        // TODO: else insert new node after URL
-    }
-
-    /// Set the version policy of the entry.
-    ///
-    /// TODO: This currently only replaces an existing version policy.
-    /// If the entry doesn't have a version policy, this method does nothing.
-    /// Future implementation should insert the node at the correct position.
-    pub fn set_version_policy(&mut self, new_policy: &str) {
-        // Build the new VERSION_POLICY node
-        let mut builder = GreenNodeBuilder::new();
-        builder.start_node(VERSION_POLICY.into());
-        // Version policy can be KEY (e.g., "debian") or VALUE
-        builder.token(VALUE.into(), new_policy);
-        builder.finish_node();
-        let new_policy_green = builder.finish();
-
-        // Create a syntax node (splice_children will detach and reattach it)
-        let new_policy_node = SyntaxNode::new_root_mut(new_policy_green);
-
-        // Find existing VERSION_POLICY node position
-        let policy_pos = self.0.children_with_tokens().position(
-            |child| matches!(child, SyntaxElement::Node(node) if node.kind() == VERSION_POLICY),
-        );
-
-        if let Some(pos) = policy_pos {
-            // Replace existing VERSION_POLICY node
-            self.0
-                .splice_children(pos..pos + 1, vec![new_policy_node.into()]);
-        }
-        // TODO: else insert new node after MATCHING_PATTERN (or URL if no pattern)
-    }
-
-    /// Set the script of the entry.
-    ///
-    /// TODO: This currently only replaces an existing script.
-    /// If the entry doesn't have a script, this method does nothing.
-    /// Future implementation should insert the node at the correct position.
-    pub fn set_script(&mut self, new_script: &str) {
-        // Build the new SCRIPT node
-        let mut builder = GreenNodeBuilder::new();
-        builder.start_node(SCRIPT.into());
-        // Script can be KEY (e.g., "uupdate") or VALUE
-        builder.token(VALUE.into(), new_script);
-        builder.finish_node();
-        let new_script_green = builder.finish();
-
-        // Create a syntax node (splice_children will detach and reattach it)
-        let new_script_node = SyntaxNode::new_root_mut(new_script_green);
-
-        // Find existing SCRIPT node position
-        let script_pos = self
-            .0
-            .children_with_tokens()
-            .position(|child| matches!(child, SyntaxElement::Node(node) if node.kind() == SCRIPT));
-
-        if let Some(pos) = script_pos {
-            // Replace existing SCRIPT node
-            self.0
-                .splice_children(pos..pos + 1, vec![new_script_node.into()]);
-        }
-        // TODO: else insert new node after VERSION_POLICY (or MATCHING_PATTERN/URL if no policy)
+    pub fn format_url(&self, package: impl FnOnce() -> String) -> url::Url {
+        subst(self.url().as_str(), package).parse().unwrap()
     }
 
     /// Set the URL of the entry.
@@ -1998,178 +1943,6 @@ https://github.com/example/tags .*/v?(\d\S+)\.tar\.gz
     assert_eq!(entry.script(), None);
 }
 
-impl Url {
-    /// Returns the URL string.
-    pub fn url(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    if token.kind() == VALUE {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
-    }
-}
-
-impl MatchingPattern {
-    /// Returns the matching pattern string.
-    pub fn pattern(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    if token.kind() == VALUE {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
-    }
-}
-
-impl VersionPolicyNode {
-    /// Returns the version policy string.
-    pub fn policy(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    // Can be KEY (e.g., "debian") or VALUE
-                    if token.kind() == VALUE || token.kind() == KEY {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
-    }
-}
-
-impl ScriptNode {
-    /// Returns the script string.
-    pub fn script(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    // Can be KEY (e.g., "uupdate") or VALUE
-                    if token.kind() == VALUE || token.kind() == KEY {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
-    }
-}
-
-#[test]
-fn test_entry_node_structure() {
-    // Test that entries properly use the new node types
-    let wf: super::WatchFile = r#"version=4
-opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
-"#
-    .parse()
-    .unwrap();
-
-    let entry = wf.entries().next().unwrap();
-
-    // Verify URL node exists and works
-    assert_eq!(entry.0.children().find(|n| n.kind() == URL).is_some(), true);
-    assert_eq!(entry.url(), "https://example.com/releases");
-
-    // Verify MATCHING_PATTERN node exists and works
-    assert_eq!(
-        entry
-            .0
-            .children()
-            .find(|n| n.kind() == MATCHING_PATTERN)
-            .is_some(),
-        true
-    );
-    assert_eq!(
-        entry.matching_pattern(),
-        Some("(?:.*?/)?v?(\\d[\\d.]*)\\.tar\\.gz".into())
-    );
-
-    // Verify VERSION_POLICY node exists and works
-    assert_eq!(
-        entry
-            .0
-            .children()
-            .find(|n| n.kind() == VERSION_POLICY)
-            .is_some(),
-        true
-    );
-    assert_eq!(entry.version(), Ok(Some(super::VersionPolicy::Debian)));
-
-    // Verify SCRIPT node exists and works
-    assert_eq!(
-        entry.0.children().find(|n| n.kind() == SCRIPT).is_some(),
-        true
-    );
-    assert_eq!(entry.script(), Some("uupdate".into()));
-}
-
-#[test]
-fn test_entry_node_structure_partial() {
-    // Test entry with only URL and pattern (no version or script)
-    let wf: super::WatchFile = r#"version=4
-https://github.com/example/tags .*/v?(\d\S+)\.tar\.gz
-"#
-    .parse()
-    .unwrap();
-
-    let entry = wf.entries().next().unwrap();
-
-    // Should have URL and MATCHING_PATTERN nodes
-    assert_eq!(entry.0.children().find(|n| n.kind() == URL).is_some(), true);
-    assert_eq!(
-        entry
-            .0
-            .children()
-            .find(|n| n.kind() == MATCHING_PATTERN)
-            .is_some(),
-        true
-    );
-
-    // Should NOT have VERSION_POLICY or SCRIPT nodes
-    assert_eq!(
-        entry
-            .0
-            .children()
-            .find(|n| n.kind() == VERSION_POLICY)
-            .is_some(),
-        false
-    );
-    assert_eq!(
-        entry.0.children().find(|n| n.kind() == SCRIPT).is_some(),
-        false
-    );
-
-    // Verify accessors work correctly
-    assert_eq!(entry.url(), "https://github.com/example/tags");
-    assert_eq!(
-        entry.matching_pattern(),
-        Some(".*/v?(\\d\\S+)\\.tar\\.gz".into())
-    );
-    assert_eq!(entry.version(), Ok(None));
-    assert_eq!(entry.script(), None);
-}
-
 #[test]
 fn test_parse_v1() {
     const WATCHV1: &str = r#"version=4
@@ -2270,7 +2043,7 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
         "https://github.com/syncthing/syncthing-gtk/tags"
     );
     assert_eq!(
-        entry.format_url(|| "syncthing-gtk".to_string()).unwrap(),
+        entry.format_url(|| "syncthing-gtk".to_string()),
         "https://github.com/syncthing/syncthing-gtk/tags"
             .parse()
             .unwrap()
@@ -2293,7 +2066,7 @@ https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
     let entry = &entries[0];
     assert_eq!(entry.url(), "https://github.com/syncthing/@PACKAGE@/tags");
     assert_eq!(
-        entry.format_url(|| "syncthing-gtk".to_string()).unwrap(),
+        entry.format_url(|| "syncthing-gtk".to_string()),
         "https://github.com/syncthing/syncthing-gtk/tags"
             .parse()
             .unwrap()
@@ -2359,7 +2132,7 @@ opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
     assert_eq!(entry.repacksuffix(), Some("+ds".into()));
     assert_eq!(entry.script(), Some("uupdate".into()));
     assert_eq!(
-        entry.format_url(|| "example-cat".to_string()).unwrap(),
+        entry.format_url(|| "example-cat".to_string()),
         "https://github.com/example/example-cat/tags"
             .parse()
             .unwrap()
@@ -2451,7 +2224,10 @@ impl crate::traits::WatchEntry for Entry {
     }
 
     fn version_policy(&self) -> Result<Option<crate::VersionPolicy>, crate::types::ParseError> {
-        Entry::version(self)
+        Entry::version(self).map_err(|e| crate::types::ParseError {
+            type_name: "VersionPolicy",
+            value: e,
+        })
     }
 
     fn script(&self) -> Option<String> {

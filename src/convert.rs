@@ -10,6 +10,8 @@ use deb822_lossless::{Deb822, Paragraph};
 pub enum ConversionError {
     /// Unknown option that cannot be converted to v5 field name
     UnknownOption(String),
+    /// Invalid version policy value
+    InvalidVersionPolicy(String),
 }
 
 impl std::fmt::Display for ConversionError {
@@ -17,6 +19,9 @@ impl std::fmt::Display for ConversionError {
         match self {
             ConversionError::UnknownOption(opt) => {
                 write!(f, "Unknown option '{}' cannot be converted to v5", opt)
+            }
+            ConversionError::InvalidVersionPolicy(err) => {
+                write!(f, "Invalid version policy: {}", err)
             }
         }
     }
@@ -144,8 +149,12 @@ fn convert_entry_to_v5(entry: &Entry, para: &mut Paragraph) -> Result<(), Conver
     }
 
     // Version policy
-    if let Ok(Some(version_policy)) = entry.version() {
-        para.set("Version-Policy", &version_policy.to_string());
+    match entry.version() {
+        Ok(Some(version_policy)) => {
+            para.set("Version-Policy", &version_policy.to_string());
+        }
+        Err(err) => return Err(ConversionError::InvalidVersionPolicy(err)),
+        Ok(None) => {}
     }
 
     // Script

@@ -13,7 +13,7 @@ rowan = "0.16"
 m_lexer = "0.0.4"
 debversion = ">=0.4.7, <0.6"
 url = "2.5.7"
-deb822-lossless = "0.4.6"
+deb822-lossless = "0.5.3"
 clap = { version = "4.5", features = ["derive"] }
 
 [dev-dependencies]

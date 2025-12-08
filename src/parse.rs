@@ -362,6 +362,32 @@ impl Parse {
     }
 }
 
+/// Calculate line and column (both 0-indexed) for the given offset in the tree.
+/// Column is measured in bytes from the start of the line.
+fn line_col_at_offset(node: &SyntaxNode, offset: rowan::TextSize) -> (usize, usize) {
+    let root = node.ancestors().last().unwrap_or_else(|| node.clone());
+    let mut line = 0;
+    let mut last_newline_offset = rowan::TextSize::from(0);
+
+    for element in root.preorder_with_tokens() {
+        if let rowan::WalkEvent::Enter(rowan::NodeOrToken::Token(token)) = element {
+            if token.text_range().start() >= offset {
+                break;
+            }
+
+            // Count newlines and track position of last one
+            for (idx, _) in token.text().match_indices('\n') {
+                line += 1;
+                last_newline_offset =
+                    token.text_range().start() + rowan::TextSize::from((idx + 1) as u32);
+            }
+        }
+    }
+
+    let column: usize = (offset - last_newline_offset).into();
+    (line, column)
+}
+
 macro_rules! ast_node {
     ($ast:ident, $kind:ident) => {
         #[derive(PartialEq, Eq, Hash)]
@@ -376,6 +402,22 @@ macro_rules! ast_node {
                 } else {
                     None
                 }
+            }
+
+            /// Get the line number (0-indexed) where this node starts.
+            pub fn line(&self) -> usize {
+                line_col_at_offset(&self.0, self.0.text_range().start()).0
+            }
+
+            /// Get the column number (0-indexed, in bytes) where this node starts.
+            pub fn column(&self) -> usize {
+                line_col_at_offset(&self.0, self.0.text_range().start()).1
+            }
+
+            /// Get both line and column (0-indexed) where this node starts.
+            /// Returns (line, column) where column is measured in bytes from the start of the line.
+            pub fn line_col(&self) -> (usize, usize) {
+                line_col_at_offset(&self.0, self.0.text_range().start())
             }
         }
 
@@ -415,11 +457,14 @@ impl WatchFile {
         WatchFile(SyntaxNode::new_root_mut(builder.finish()))
     }
 
+    /// Returns the version AST node of the watch file.
+    pub fn version_node(&self) -> Option<Version> {
+        self.0.children().find_map(Version::cast)
+    }
+
     /// Returns the version of the watch file.
     pub fn version(&self) -> u32 {
-        self.0
-            .children()
-            .find_map(Version::cast)
+        self.version_node()
             .map(|it| it.version())
             .unwrap_or(DEFAULT_VERSION)
     }
@@ -1326,7 +1371,7 @@ impl Entry {
         let mut options = std::collections::HashMap::new();
 
         if let Some(ol) = self.option_list() {
-            for opt in ol.children() {
+            for opt in ol.options() {
                 let key = opt.key();
                 let value = opt.value();
                 if let (Some(key), Some(value)) = (key, value) {
@@ -1360,23 +1405,27 @@ impl Entry {
         })
     }
 
+    /// Returns the URL AST node of the entry.
+    pub fn url_node(&self) -> Option<Url> {
+        self.0.children().find_map(Url::cast)
+    }
+
     /// Returns the URL of the entry.
     pub fn url(&self) -> String {
-        self.0
-            .children()
-            .find_map(Url::cast)
-            .map(|it| it.url())
-            .unwrap_or_else(|| {
-                // Fallback for entries without URL node (shouldn't happen with new parser)
-                self.items().next().unwrap()
-            })
+        self.url_node().map(|it| it.url()).unwrap_or_else(|| {
+            // Fallback for entries without URL node (shouldn't happen with new parser)
+            self.items().next().unwrap()
+        })
+    }
+
+    /// Returns the matching pattern AST node of the entry.
+    pub fn matching_pattern_node(&self) -> Option<MatchingPattern> {
+        self.0.children().find_map(MatchingPattern::cast)
     }
 
     /// Returns the matching pattern of the entry.
     pub fn matching_pattern(&self) -> Option<String> {
-        self.0
-            .children()
-            .find_map(MatchingPattern::cast)
+        self.matching_pattern_node()
             .map(|it| it.pattern())
             .or_else(|| {
                 // Fallback for entries without MATCHING_PATTERN node
@@ -1384,11 +1433,14 @@ impl Entry {
             })
     }
 
+    /// Returns the version policy AST node of the entry.
+    pub fn version_node(&self) -> Option<VersionPolicyNode> {
+        self.0.children().find_map(VersionPolicyNode::cast)
+    }
+
     /// Returns the version policy
     pub fn version(&self) -> Result<Option<crate::VersionPolicy>, String> {
-        self.0
-            .children()
-            .find_map(VersionPolicyNode::cast)
+        self.version_node()
             .map(|it| it.policy().parse())
             .transpose()
             .or_else(|_e| {
@@ -1397,16 +1449,17 @@ impl Entry {
             })
     }
 
+    /// Returns the script AST node of the entry.
+    pub fn script_node(&self) -> Option<ScriptNode> {
+        self.0.children().find_map(ScriptNode::cast)
+    }
+
     /// Returns the script of the entry.
     pub fn script(&self) -> Option<String> {
-        self.0
-            .children()
-            .find_map(ScriptNode::cast)
-            .map(|it| it.script())
-            .or_else(|| {
-                // Fallback for entries without SCRIPT node
-                self.items().nth(3)
-            })
+        self.script_node().map(|it| it.script()).or_else(|| {
+            // Fallback for entries without SCRIPT node
+            self.items().nth(3)
+        })
     }
 
     /// Replace all substitutions and return the resulting URL.
@@ -1686,27 +1739,27 @@ impl std::fmt::Debug for OptionList {
 }
 
 impl OptionList {
-    fn children(&self) -> impl Iterator<Item = _Option> + '_ {
+    /// Returns an iterator over all option nodes in the options list.
+    pub fn options(&self) -> impl Iterator<Item = _Option> + '_ {
         self.0.children().filter_map(_Option::cast)
     }
 
+    /// Find an option node by key.
+    pub fn find_option(&self, key: &str) -> Option<_Option> {
+        self.options().find(|opt| opt.key().as_deref() == Some(key))
+    }
+
     pub fn has_option(&self, key: &str) -> bool {
-        self.children().any(|it| it.key().as_deref() == Some(key))
+        self.options().any(|it| it.key().as_deref() == Some(key))
     }
 
     pub fn get_option(&self, key: &str) -> Option<String> {
-        for child in self.children() {
+        for child in self.options() {
             if child.key().as_deref() == Some(key) {
                 return child.value();
             }
         }
         None
-    }
-
-    /// Find an option by key.
-    fn find_option(&self, key: &str) -> Option<_Option> {
-        self.children()
-            .find(|opt| opt.key().as_deref() == Some(key))
     }
 
     /// Add a new option to the end of the options list.
@@ -3230,4 +3283,56 @@ fn test_watchfile_add_entry_preserves_format() {
     let reparsed: super::WatchFile = wf_str.parse().unwrap();
     assert_eq!(reparsed.version(), 4);
     assert_eq!(reparsed.entries().count(), 1);
+}
+
+#[test]
+fn test_line_col() {
+    let text = r#"version=4
+opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d[\d.]*)\.tar\.gz debian uupdate
+"#;
+    let wf = text.parse::<super::WatchFile>().unwrap();
+
+    // Test version line position
+    let version_node = wf.version_node().unwrap();
+    assert_eq!(version_node.line(), 0);
+    assert_eq!(version_node.column(), 0);
+    assert_eq!(version_node.line_col(), (0, 0));
+
+    // Test entry line numbers
+    let entries: Vec<_> = wf.entries().collect();
+    assert_eq!(entries.len(), 1);
+
+    // Entry starts at line 1
+    assert_eq!(entries[0].line(), 1);
+    assert_eq!(entries[0].column(), 0);
+    assert_eq!(entries[0].line_col(), (1, 0));
+
+    // Test node accessors
+    let option_list = entries[0].option_list().unwrap();
+    assert_eq!(option_list.line(), 1); // Option list is on line 1
+
+    let url_node = entries[0].url_node().unwrap();
+    assert_eq!(url_node.line(), 1); // URL is on line 1
+
+    let pattern_node = entries[0].matching_pattern_node().unwrap();
+    assert_eq!(pattern_node.line(), 1); // Pattern is on line 1
+
+    let version_policy_node = entries[0].version_node().unwrap();
+    assert_eq!(version_policy_node.line(), 1); // Version policy is on line 1
+
+    let script_node = entries[0].script_node().unwrap();
+    assert_eq!(script_node.line(), 1); // Script is on line 1
+
+    // Test individual option nodes
+    let options: Vec<_> = option_list.options().collect();
+    assert_eq!(options.len(), 1);
+    assert_eq!(options[0].key(), Some("compression".to_string()));
+    assert_eq!(options[0].value(), Some("xz".to_string()));
+    assert_eq!(options[0].line(), 1); // Option is on line 1
+
+    // Test find_option
+    let compression_opt = option_list.find_option("compression").unwrap();
+    assert_eq!(compression_opt.line(), 1);
+    assert_eq!(compression_opt.column(), 5); // After "opts="
+    assert_eq!(compression_opt.line_col(), (1, 5));
 }

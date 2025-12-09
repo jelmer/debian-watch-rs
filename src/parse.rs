@@ -390,7 +390,7 @@ fn line_col_at_offset(node: &SyntaxNode, offset: rowan::TextSize) -> (usize, usi
 
 macro_rules! ast_node {
     ($ast:ident, $kind:ident) => {
-        #[derive(PartialEq, Eq, Hash)]
+        #[derive(Clone, PartialEq, Eq, Hash)]
         #[repr(transparent)]
         /// A node in the syntax tree for $ast
         pub struct $ast(SyntaxNode);

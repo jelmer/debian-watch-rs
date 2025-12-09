@@ -87,6 +87,7 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
 
 pub use crate::parse::Entry;
 pub use crate::parse::EntryBuilder;
+pub use crate::parse::ParseError;
 pub use crate::parse::WatchFile;
 
 #[cfg(test)]

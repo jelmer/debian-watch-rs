@@ -3,9 +3,11 @@ use crate::types::*;
 use crate::SyntaxKind;
 use crate::SyntaxKind::*;
 use crate::DEFAULT_VERSION;
+use std::io::Read;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+/// Error type for parse errors
 pub struct ParseError(Vec<String>);
 
 impl std::fmt::Display for ParseError {
@@ -637,6 +639,32 @@ impl Version {
                 _ => None,
             })
             .unwrap_or(DEFAULT_VERSION)
+    }
+
+    /// Read a watch file from a Read object.
+    pub fn from_reader<R: std::io::Read>(reader: R) -> Result<WatchFile, ParseError> {
+        let mut buf_reader = std::io::BufReader::new(reader);
+        let mut content = String::new();
+        buf_reader
+            .read_to_string(&mut content)
+            .map_err(|e| ParseError(vec![e.to_string()]))?;
+        content.parse()
+    }
+
+    /// Read a watch file from a Read object, allowing syntax errors.
+    pub fn from_reader_relaxed<R: std::io::Read>(
+        mut r: R,
+    ) -> Result<(Self, Vec<String>), std::io::Error> {
+        let mut content = String::new();
+        r.read_to_string(&mut content)?;
+        let parsed = parse(&content);
+        Ok((parsed.root().version_node().unwrap(), parsed.errors))
+    }
+
+    /// Parse a debian watch file from a string, allowing syntax errors.
+    pub fn from_str_relaxed(s: &str) -> (Self, Vec<String>) {
+        let parsed = parse(s);
+        (parsed.root().version_node().unwrap(), parsed.errors)
     }
 }
 

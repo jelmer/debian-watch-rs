@@ -1,7 +1,7 @@
 //! Conversion between watch file formats
 
-use crate::parse::{Entry, WatchFile};
 use crate::deb822::WatchFileV5;
+use crate::parse::{Entry, WatchFile};
 use crate::SyntaxKind::*;
 use deb822_lossless::{Deb822, Paragraph};
 
@@ -164,7 +164,7 @@ fn convert_entry_to_v5(entry: &Entry, para: &mut Paragraph) -> Result<(), Conver
 
     // Convert all options to fields
     if let Some(opts_list) = entry.option_list() {
-        for (key, value) in opts_list.options() {
+        for (key, value) in opts_list.iter_key_values() {
             // Convert option names to Title-Case with hyphens
             let field_name = option_to_field_name(&key)?;
             para.set(&field_name, &value);
@@ -276,9 +276,15 @@ opts=filenamemangle=s/.*\/(.*)/$1/ https://example.com/files .*/v?(\d+)\.tar\.gz
 
         let output = ToString::to_string(&v5_file);
 
-        // Check that comment is preserved
-        assert!(output.contains("# This is a comment about the package"));
-        assert!(output.contains("Version: 5"));
+        // Check that comment is preserved and output structure is correct
+        let expected = "Version: 5
+
+# This is a comment about the package
+Source: https://example.com/files
+Matching-Pattern: .*/v?(\\d+)\\.tar\\.gz
+Filename-Mangle: s/.*\\/(.*)/$1/
+";
+        assert_eq!(output, expected);
     }
 
     #[test]
@@ -337,5 +343,71 @@ opts=compression=xz,component=foo https://example.com/files .*/(\d+)\.tar\.gz
         let entries: Vec<_> = v5_reparsed.entries().collect();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].component(), Some("foo".to_string()));
+    }
+
+    #[test]
+    fn test_conversion_with_version_policy_and_script() {
+        let v4_input = r#"version=4
+https://example.com/files .*/v?(\d+)\.tar\.gz debian uupdate
+"#;
+
+        let v4_file: WatchFile = v4_input.parse().unwrap();
+        let v5_file = convert_to_v5(&v4_file).unwrap();
+
+        let entries: Vec<_> = v5_file.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(entry.url(), "https://example.com/files");
+        assert_eq!(
+            entry.version_policy().unwrap(),
+            Some(crate::VersionPolicy::Debian)
+        );
+        assert_eq!(entry.script(), Some("uupdate".to_string()));
+
+        // Verify the output structure is exactly as expected
+        let output = v5_file.to_string();
+        let expected = "Version: 5
+
+Source: https://example.com/files
+Matching-Pattern: .*/v?(\\d+)\\.tar\\.gz
+Version-Policy: debian
+Script: uupdate
+";
+        assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn test_conversion_with_mangle_options() {
+        let v4_input = r#"version=4
+opts=uversionmangle=s/-/~/g,dversionmangle=s/\+dfsg// https://example.com/files .*/(\d+)\.tar\.gz
+"#;
+
+        let v4_file: WatchFile = v4_input.parse().unwrap();
+        let v5_file = convert_to_v5(&v4_file).unwrap();
+
+        let entries: Vec<_> = v5_file.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.get_option("Upstream-Version-Mangle"),
+            Some("s/-/~/g".to_string())
+        );
+        assert_eq!(
+            entry.get_option("Debian-Version-Mangle"),
+            Some("s/\\+dfsg//".to_string())
+        );
+
+        // Verify exact output structure
+        let output = v5_file.to_string();
+        let expected = "Version: 5
+
+Source: https://example.com/files
+Matching-Pattern: .*/(\\d+)\\.tar\\.gz
+Upstream-Version-Mangle: s/-/~/g
+Debian-Version-Mangle: s/\\+dfsg//
+";
+        assert_eq!(output, expected);
     }
 }

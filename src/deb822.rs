@@ -1,9 +1,9 @@
 //! Watch file implementation for format 5 (RFC822/deb822 style)
-use deb822_lossless::{Deb822, Paragraph};
-use std::str::FromStr;
 use crate::traits::{WatchEntry, WatchFileFormat};
 use crate::types::ParseError as TypesParseError;
 use crate::VersionPolicy;
+use deb822_lossless::{Deb822, Paragraph};
+use std::str::FromStr;
 
 #[derive(Debug)]
 /// Parse error for watch file parsing

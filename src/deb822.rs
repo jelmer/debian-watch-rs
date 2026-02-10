@@ -4,6 +4,39 @@ use crate::VersionPolicy;
 use deb822_lossless::{Deb822, Paragraph};
 use std::str::FromStr;
 
+/// Get the deb822 field name for a WatchOption variant
+fn watch_option_to_key(option: &crate::types::WatchOption) -> &'static str {
+    use crate::types::WatchOption;
+
+    match option {
+        WatchOption::Component(_) => "Component",
+        WatchOption::Compression(_) => "Compression",
+        WatchOption::UserAgent(_) => "User-Agent",
+        WatchOption::Pagemangle(_) => "Pagemangle",
+        WatchOption::Uversionmangle(_) => "Uversionmangle",
+        WatchOption::Dversionmangle(_) => "Dversionmangle",
+        WatchOption::Dirversionmangle(_) => "Dirversionmangle",
+        WatchOption::Oversionmangle(_) => "Oversionmangle",
+        WatchOption::Downloadurlmangle(_) => "Downloadurlmangle",
+        WatchOption::Pgpsigurlmangle(_) => "Pgpsigurlmangle",
+        WatchOption::Filenamemangle(_) => "Filenamemangle",
+        WatchOption::VersionPolicy(_) => "Version-Policy",
+        WatchOption::Searchmode(_) => "Searchmode",
+        WatchOption::Mode(_) => "Mode",
+        WatchOption::Pgpmode(_) => "Pgpmode",
+        WatchOption::Gitexport(_) => "Gitexport",
+        WatchOption::Gitmode(_) => "Gitmode",
+        WatchOption::Pretty(_) => "Pretty",
+        WatchOption::Ctype(_) => "Ctype",
+        WatchOption::Repacksuffix(_) => "Repacksuffix",
+        WatchOption::Unzipopt(_) => "Unzipopt",
+        WatchOption::Script(_) => "Script",
+        WatchOption::Decompress => "Decompress",
+        WatchOption::Bare => "Bare",
+        WatchOption::Repack => "Repack",
+    }
+}
+
 #[derive(Debug)]
 /// Parse error for watch file parsing
 pub struct ParseError(String);
@@ -276,8 +309,14 @@ impl Entry {
         self.paragraph.set(key, value);
     }
 
-    /// Delete an option from the entry
-    pub fn delete_option(&mut self, key: &str) {
+    /// Delete an option from the entry using a WatchOption enum
+    pub fn delete_option(&mut self, option: crate::types::WatchOption) {
+        let key = watch_option_to_key(&option);
+        self.paragraph.remove(key);
+    }
+
+    /// Delete an option from the entry using a string key (for backward compatibility)
+    pub fn delete_option_str(&mut self, key: &str) {
         self.paragraph.remove(key);
     }
 

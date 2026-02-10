@@ -336,31 +336,32 @@ impl ParsedEntry {
             .unwrap_or_default()
     }
 
-    /// Set an option/field value using a WatchOption enum (only supported for deb822 format).
+    /// Set an option/field value using a WatchOption enum.
     ///
     /// For v5 (deb822) entries, this sets a field in the paragraph.
-    /// For v1-4 (line-based) entries, this is not supported as entries are immutable.
+    /// For v1-4 (line-based) entries, this sets an option in the opts= list.
     ///
     /// # Examples
     ///
     /// ```
-    /// # #[cfg(feature = "deb822")]
+    /// # #[cfg(feature = "linebased")]
     /// # {
     /// use debian_watch::parse::ParsedWatchFile;
     /// use debian_watch::{WatchOption, Compression};
     ///
-    /// let mut wf = ParsedWatchFile::new(5).unwrap();
+    /// let mut wf = ParsedWatchFile::new(4).unwrap();
     /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
     /// entry.set_option(WatchOption::Component("upstream".to_string()));
     /// entry.set_option(WatchOption::Compression(Compression::Xz));
+    /// assert_eq!(entry.get_option("component"), Some("upstream".to_string()));
+    /// assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
     /// # }
     /// ```
     pub fn set_option(&mut self, option: crate::types::WatchOption) {
         match self {
             #[cfg(feature = "linebased")]
-            ParsedEntry::LineBased(_) => {
-                // Line-based entries are immutable, cannot set options after creation
-                // Options must be set during entry construction using EntryBuilder
+            ParsedEntry::LineBased(e) => {
+                e.set_option(option);
             }
             #[cfg(feature = "deb822")]
             ParsedEntry::Deb822(e) => {
@@ -442,6 +443,37 @@ impl ParsedEntry {
             ParsedEntry::LineBased(e) => e.line(),
             #[cfg(feature = "deb822")]
             ParsedEntry::Deb822(e) => e.line(),
+        }
+    }
+
+    /// Remove/delete an option from the entry
+    ///
+    /// For v5 (deb822) entries, this removes a field from the paragraph.
+    /// For v1-4 (line-based) entries, this removes an option from the opts= list.
+    /// If this is the last option in a line-based entry, the entire opts= declaration is removed.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "linebased")]
+    /// # {
+    /// use debian_watch::parse::ParsedWatchFile;
+    /// use debian_watch::WatchOption;
+    ///
+    /// let mut wf = ParsedWatchFile::new(4).unwrap();
+    /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
+    /// entry.set_option(WatchOption::Compression(debian_watch::Compression::Xz));
+    /// assert!(entry.has_option("compression"));
+    /// entry.remove_option(WatchOption::Compression(debian_watch::Compression::Xz));
+    /// assert!(!entry.has_option("compression"));
+    /// # }
+    /// ```
+    pub fn remove_option(&mut self, option: crate::types::WatchOption) {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.del_opt(option),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => e.delete_option(option),
         }
     }
 }

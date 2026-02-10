@@ -207,6 +207,6 @@ pub trait WatchEntry {
 
     /// Replace all substitutions and return the resulting URL
     fn format_url(&self, package: impl FnOnce() -> String) -> Result<url::Url, url::ParseError> {
-        crate::parse::subst(self.url().as_str(), package).parse()
+        crate::subst::subst(self.url().as_str(), package).parse()
     }
 }

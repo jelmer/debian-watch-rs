@@ -1,7 +1,8 @@
 //! Command-line tool to convert Debian watch files from formats 1-4 to format 5
 
 use clap::Parser;
-use debian_watch::{convert_to_v5, WatchFile};
+use debian_watch::convert_to_v5;
+use debian_watch::linebased::WatchFile;
 use std::fs;
 use std::io::{self, Read};
 use std::path::PathBuf;

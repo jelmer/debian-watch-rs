@@ -19,20 +19,20 @@ impl std::fmt::Display for ParseError {
 
 /// A watch file in format 5 (RFC822/deb822 style)
 #[derive(Debug)]
-pub struct WatchFileV5(Deb822);
+pub struct WatchFile(Deb822);
 
 /// An entry in a format 5 watch file
-pub struct EntryV5 {
+pub struct Entry {
     paragraph: Paragraph,
     defaults: Option<Paragraph>,
 }
 
-impl WatchFileV5 {
+impl WatchFile {
     /// Create a new empty format 5 watch file
     pub fn new() -> Self {
         // Create a minimal format 5 watch file from a string
         let content = "Version: 5\n";
-        WatchFileV5::from_str(content).expect("Failed to create empty watch file")
+        WatchFile::from_str(content).expect("Failed to create empty watch file")
     }
 
     /// Returns the version of the watch file (always 5 for this type)
@@ -57,7 +57,7 @@ impl WatchFileV5 {
 
     /// Returns an iterator over all entries in the watch file.
     /// The first paragraph contains defaults, subsequent paragraphs are entries.
-    pub fn entries(&self) -> impl Iterator<Item = EntryV5> + '_ {
+    pub fn entries(&self) -> impl Iterator<Item = Entry> + '_ {
         let paragraphs: Vec<_> = self.0.paragraphs().collect();
         let defaults = self.defaults();
 
@@ -78,7 +78,7 @@ impl WatchFileV5 {
         paragraphs
             .into_iter()
             .skip(start_index)
-            .map(move |p| EntryV5 {
+            .map(move |p| Entry {
                 paragraph: p,
                 defaults: defaults.clone(),
             })
@@ -90,13 +90,13 @@ impl WatchFileV5 {
     }
 }
 
-impl Default for WatchFileV5 {
+impl Default for WatchFile {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FromStr for WatchFileV5 {
+impl FromStr for WatchFile {
     type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -113,20 +113,20 @@ impl FromStr for WatchFileV5 {
                     return Err(ParseError(format!("Expected version 5, got {}", version)));
                 }
 
-                Ok(WatchFileV5(deb822))
+                Ok(WatchFile(deb822))
             }
             Err(e) => Err(ParseError(e.to_string())),
         }
     }
 }
 
-impl std::fmt::Display for WatchFileV5 {
+impl std::fmt::Display for WatchFile {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", self.0)
     }
 }
 
-impl EntryV5 {
+impl Entry {
     /// Get a field value from the entry, with fallback to defaults paragraph.
     /// First checks the entry's own fields, then falls back to the defaults paragraph if present.
     pub(crate) fn get_field(&self, key: &str) -> Option<String> {
@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn test_create_v5_watchfile() {
-        let wf = WatchFileV5::new();
+        let wf = WatchFile::new();
         assert_eq!(wf.version(), 5);
 
         let output = wf.to_string();
@@ -235,7 +235,7 @@ Source: https://github.com/owner/repo/tags
 Matching-Pattern: .*/v?(\d\S+)\.tar\.gz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
         assert_eq!(wf.version(), 5);
 
         let entries: Vec<_> = wf.entries().collect();
@@ -263,7 +263,7 @@ Source: https://github.com/owner/repo2/tags
 Matching-Pattern: .*/release-(\d\S+)\.tar\.gz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
         let entries: Vec<_> = wf.entries().collect();
         assert_eq!(entries.len(), 2);
 
@@ -285,7 +285,7 @@ source: https://example.com/files
 matching-pattern: .*\.tar\.gz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
         let entries: Vec<_> = wf.entries().collect();
         assert_eq!(entries.len(), 1);
 
@@ -303,7 +303,7 @@ Matching-Pattern: .*\.tar\.gz
 Compression: xz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
         let entries: Vec<_> = wf.entries().collect();
         assert_eq!(entries.len(), 1);
 
@@ -321,7 +321,7 @@ Matching-Pattern: .*\.tar\.gz
 Component: foo
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
         let entries: Vec<_> = wf.entries().collect();
         assert_eq!(entries.len(), 1);
 
@@ -337,7 +337,7 @@ Source: https://example.com/files
 Matching-Pattern: .*\.tar\.gz
 "#;
 
-        let result: Result<WatchFileV5, _> = input.parse();
+        let result: Result<WatchFile, _> = input.parse();
         assert!(result.is_err());
     }
 
@@ -349,11 +349,11 @@ Source: https://example.com/files
 Matching-Pattern: .*\.tar\.gz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
         let output = wf.to_string();
 
         // The output should be parseable again
-        let wf2: WatchFileV5 = output.parse().unwrap();
+        let wf2: WatchFile = output.parse().unwrap();
         assert_eq!(wf2.version(), 5);
 
         let entries: Vec<_> = wf2.entries().collect();
@@ -383,7 +383,7 @@ Matching-Pattern: .*\.tar\.gz
 Compression: gz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
 
         // Check that defaults paragraph is detected
         let defaults = wf.defaults();
@@ -419,7 +419,7 @@ Source: https://example.com/repo1
 Matching-Pattern: .*\.tar\.gz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
 
         // Check that there's no defaults paragraph (first paragraph has Source)
         assert!(wf.defaults().is_none());
@@ -439,7 +439,7 @@ Source: https://example.com/repo1
 Matching-Pattern: .*\.tar\.gz
 "#;
 
-        let wf: WatchFileV5 = input.parse().unwrap();
+        let wf: WatchFile = input.parse().unwrap();
 
         // Check that defaults work with different case
         let entries: Vec<_> = wf.entries().collect();
@@ -456,15 +456,15 @@ Matching-Pattern: .*\.tar\.gz
 
 // Trait implementations for WatchFileFormat and WatchEntry
 
-impl WatchFileFormat for WatchFileV5 {
-    type Entry = EntryV5;
+impl WatchFileFormat for WatchFile {
+    type Entry = Entry;
 
     fn version(&self) -> u32 {
         self.version()
     }
 
     fn entries(&self) -> Box<dyn Iterator<Item = Self::Entry> + '_> {
-        Box::new(WatchFileV5::entries(self))
+        Box::new(WatchFile::entries(self))
     }
 
     fn format_string(&self) -> String {
@@ -472,14 +472,14 @@ impl WatchFileFormat for WatchFileV5 {
     }
 }
 
-impl WatchEntry for EntryV5 {
+impl WatchEntry for Entry {
     fn url(&self) -> String {
         // In format 5, the URL is in the "Source" field
         self.source().unwrap_or_default()
     }
 
     fn matching_pattern(&self) -> Option<String> {
-        EntryV5::matching_pattern(self)
+        Entry::matching_pattern(self)
     }
 
     fn version_policy(&self) -> Result<Option<VersionPolicy>, TypesParseError> {

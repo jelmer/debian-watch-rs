@@ -180,7 +180,7 @@ pub trait Discover: WatchEntry {
 
             // Apply substitution to the matching pattern
             let package_name = String::new();
-            let pattern = crate::parse::subst(&pattern_str, || package_name.clone());
+            let pattern = crate::subst::subst(&pattern_str, || package_name.clone());
 
             // Determine search mode
             let searchmode =
@@ -344,7 +344,7 @@ pub trait Discover: WatchEntry {
 
         // Apply substitution to the matching pattern
         let package_name = String::new();
-        let pattern = crate::parse::subst(&matching_pattern, || package_name.clone());
+        let pattern = crate::subst::subst(&matching_pattern, || package_name.clone());
 
         // Determine search mode
         let searchmode = self

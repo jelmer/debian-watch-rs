@@ -9,7 +9,8 @@ repository = "https://github.com/jelmer/debian-watch-rs.git"
 homepage = "https://github.com/jelmer/debian-watch-rs"
 
 [features]
-default = []
+default = ["linebased"]
+linebased = []
 discover = ["scraper", "reqwest"]
 blocking = ["reqwest?/blocking"]
 pgp = ["sequoia-openpgp", "anyhow"]
@@ -33,4 +34,4 @@ maplit = "1.0.2"
 
 [[bin]]
 name = "convert-watch-v5"
-required-features = ["deb822"]
+required-features = ["deb822", "linebased"]

@@ -676,7 +676,7 @@ impl WatchFile {
     /// # Examples
     ///
     /// ```
-    /// use debian_watch::{WatchFile, EntryBuilder};
+    /// use debian_watch::linebased::{WatchFile, EntryBuilder};
     ///
     /// let mut wf = WatchFile::new(Some(4));
     ///
@@ -779,7 +779,7 @@ impl Version {
 /// # Examples
 ///
 /// ```
-/// use debian_watch::EntryBuilder;
+/// use debian_watch::linebased::EntryBuilder;
 ///
 /// // Minimal entry with just URL and pattern
 /// let entry = EntryBuilder::new("https://github.com/example/tags")
@@ -935,7 +935,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// use debian_watch::Entry;
+    /// use debian_watch::linebased::Entry;
     ///
     /// let entry = Entry::builder("https://github.com/example/tags")
     ///     .matching_pattern(".*/v?(\\d\\S+)\\.tar\\.gz")
@@ -1192,7 +1192,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// # use debian_watch::WatchFile;
+    /// # use debian_watch::linebased::WatchFile;
     /// let wf: WatchFile = r#"version=4
     /// opts=uversionmangle=s/\+ds// https://example.com/ .*
     /// "#.parse().unwrap();
@@ -1215,7 +1215,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// # use debian_watch::WatchFile;
+    /// # use debian_watch::linebased::WatchFile;
     /// let wf: WatchFile = r#"version=4
     /// opts=dversionmangle=s/\+dfsg$// https://example.com/ .*
     /// "#.parse().unwrap();
@@ -1238,7 +1238,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// # use debian_watch::WatchFile;
+    /// # use debian_watch::linebased::WatchFile;
     /// let wf: WatchFile = r#"version=4
     /// opts=oversionmangle=s/$/-1/ https://example.com/ .*
     /// "#.parse().unwrap();
@@ -1261,7 +1261,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// # use debian_watch::WatchFile;
+    /// # use debian_watch::linebased::WatchFile;
     /// let wf: WatchFile = r#"version=4
     /// opts=dirversionmangle=s/v(\d)/$1/ https://example.com/ .*
     /// "#.parse().unwrap();
@@ -1284,7 +1284,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// # use debian_watch::WatchFile;
+    /// # use debian_watch::linebased::WatchFile;
     /// let wf: WatchFile = r#"version=4
     /// opts=filenamemangle=s/.+\/v?(\d\S+)\.tar\.gz/mypackage-$1.tar.gz/ https://example.com/ .*
     /// "#.parse().unwrap();
@@ -1307,7 +1307,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// # use debian_watch::WatchFile;
+    /// # use debian_watch::linebased::WatchFile;
     /// let wf: WatchFile = r#"version=4
     /// opts=pagemangle=s/&amp;/&/g https://example.com/ .*
     /// "#.parse().unwrap();
@@ -1332,7 +1332,7 @@ impl Entry {
     /// # Examples
     ///
     /// ```
-    /// # use debian_watch::WatchFile;
+    /// # use debian_watch::linebased::WatchFile;
     /// let wf: WatchFile = r#"version=4
     /// opts=downloadurlmangle=s|/archive/|/download/| https://example.com/ .*
     /// "#.parse().unwrap();
@@ -1453,7 +1453,9 @@ impl Entry {
 
     /// Replace all substitutions and return the resulting URL.
     pub fn format_url(&self, package: impl FnOnce() -> String) -> url::Url {
-        subst(self.url().as_str(), package).parse().unwrap()
+        crate::subst::subst(self.url().as_str(), package)
+            .parse()
+            .unwrap()
     }
 
     /// Set the URL of the entry.
@@ -1671,59 +1673,6 @@ impl Entry {
     }
 }
 
-const SUBSTITUTIONS: &[(&str, &str)] = &[
-    // This is substituted with the source package name found in the first line
-    // of the debian/changelog file.
-    // "@PACKAGE@": None,
-    // This is substituted by the legal upstream version regex (capturing).
-    ("@ANY_VERSION@", r"[-_]?(\d[\-+\.:\~\da-zA-Z]*)"),
-    // This is substituted by the typical archive file extension regex
-    // (non-capturing).
-    (
-        "@ARCHIVE_EXT@",
-        r"(?i)\.(?:tar\.xz|tar\.bz2|tar\.gz|zip|tgz|tbz|txz)",
-    ),
-    // This is substituted by the typical signature file extension regex
-    // (non-capturing).
-    (
-        "@SIGNATURE_EXT@",
-        r"(?i)\.(?:tar\.xz|tar\.bz2|tar\.gz|zip|tgz|tbz|txz)\.(?:asc|pgp|gpg|sig|sign)",
-    ),
-    // This is substituted by the typical Debian extension regexp (capturing).
-    ("@DEB_EXT@", r"[\+~](debian|dfsg|ds|deb)(\.)?(\d+)?$"),
-];
-
-pub fn subst(text: &str, package: impl FnOnce() -> String) -> String {
-    // Early return if no substitutions are needed
-    if !text.contains('@') {
-        return text.to_string();
-    }
-
-    // Apply all substitutions in a single pass using fold
-    let result = SUBSTITUTIONS
-        .iter()
-        .fold(text.to_string(), |acc, (pattern, replacement)| {
-            acc.replace(pattern, replacement)
-        });
-
-    // Handle @PACKAGE@ substitution if needed
-    if result.contains("@PACKAGE@") {
-        let package_name = package();
-        result.replace("@PACKAGE@", &package_name)
-    } else {
-        result
-    }
-}
-
-#[test]
-fn test_subst() {
-    assert_eq!(
-        subst("@ANY_VERSION@", || unreachable!()),
-        r"[-_]?(\d[\-+\.:\~\da-zA-Z]*)"
-    );
-    assert_eq!(subst("@PACKAGE@", || "dulwich".to_string()), "dulwich");
-}
-
 impl std::fmt::Debug for OptionList {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OptionList")
@@ -1743,6 +1692,7 @@ impl OptionList {
         self.options().find(|opt| opt.key().as_deref() == Some(key))
     }
 
+    /// Check if an option with the given key exists
     pub fn has_option(&self, key: &str) -> bool {
         self.options().any(|it| it.key().as_deref() == Some(key))
     }
@@ -1759,6 +1709,7 @@ impl OptionList {
         })
     }
 
+    /// Get the value of an option by key
     pub fn get_option(&self, key: &str) -> Option<String> {
         for child in self.options() {
             if child.key().as_deref() == Some(key) {

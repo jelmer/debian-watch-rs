@@ -129,6 +129,46 @@ pub enum ParsedEntry {
 }
 
 impl ParsedWatchFile {
+    /// Create a new empty watch file with the specified version.
+    ///
+    /// - For version 5, creates a deb822-format watch file (requires `deb822` feature)
+    /// - For versions 1-4, creates a line-based watch file (requires `linebased` feature)
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "deb822")]
+    /// # {
+    /// use debian_watch::parse::ParsedWatchFile;
+    ///
+    /// let wf = ParsedWatchFile::new(5).unwrap();
+    /// assert_eq!(wf.version(), 5);
+    /// # }
+    /// ```
+    pub fn new(version: u32) -> Result<Self, ParseError> {
+        match version {
+            #[cfg(feature = "deb822")]
+            5 => Ok(ParsedWatchFile::Deb822(crate::deb822::WatchFile::new())),
+            #[cfg(not(feature = "deb822"))]
+            5 => Err(ParseError::FeatureNotEnabled(
+                "deb822 feature required for v5 format".to_string(),
+            )),
+            #[cfg(feature = "linebased")]
+            v @ 1..=4 => Ok(ParsedWatchFile::LineBased(
+                crate::linebased::WatchFile::new(Some(v)),
+            )),
+            #[cfg(not(feature = "linebased"))]
+            v @ 1..=4 => Err(ParseError::FeatureNotEnabled(format!(
+                "linebased feature required for v{} format",
+                v
+            ))),
+            v => Err(ParseError::FeatureNotEnabled(format!(
+                "unsupported watch file version: {}",
+                v
+            ))),
+        }
+    }
+
     /// Get the version of the watch file
     pub fn version(&self) -> u32 {
         match self {
@@ -149,6 +189,44 @@ impl ParsedWatchFile {
             ParsedWatchFile::Deb822(wf) => wf.entries().map(ParsedEntry::Deb822).collect(),
         };
         entries.into_iter()
+    }
+
+    /// Add a new entry to the watch file and return it.
+    ///
+    /// For v5 (deb822) watch files, this adds a new paragraph with Source and Matching-Pattern fields.
+    /// For v1-4 (line-based) watch files, this adds a new entry line.
+    ///
+    /// Returns a `ParsedEntry` that can be used to query or modify the entry.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "deb822")]
+    /// # {
+    /// use debian_watch::parse::ParsedWatchFile;
+    /// use debian_watch::WatchOption;
+    ///
+    /// let mut wf = ParsedWatchFile::new(5).unwrap();
+    /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
+    /// entry.set_option(WatchOption::Component("upstream".to_string()));
+    /// # }
+    /// ```
+    pub fn add_entry(&mut self, source: &str, matching_pattern: &str) -> ParsedEntry {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedWatchFile::LineBased(wf) => {
+                let entry = crate::linebased::EntryBuilder::new(source)
+                    .matching_pattern(matching_pattern)
+                    .build();
+                let added_entry = wf.add_entry(entry);
+                ParsedEntry::LineBased(added_entry)
+            }
+            #[cfg(feature = "deb822")]
+            ParsedWatchFile::Deb822(wf) => {
+                let added_entry = wf.add_entry(source, matching_pattern);
+                ParsedEntry::Deb822(added_entry)
+            }
+        }
     }
 }
 
@@ -256,6 +334,39 @@ impl ParsedEntry {
         self.get_option("searchmode")
             .and_then(|s| s.parse().ok())
             .unwrap_or_default()
+    }
+
+    /// Set an option/field value using a WatchOption enum (only supported for deb822 format).
+    ///
+    /// For v5 (deb822) entries, this sets a field in the paragraph.
+    /// For v1-4 (line-based) entries, this is not supported as entries are immutable.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "deb822")]
+    /// # {
+    /// use debian_watch::parse::ParsedWatchFile;
+    /// use debian_watch::{WatchOption, Compression};
+    ///
+    /// let mut wf = ParsedWatchFile::new(5).unwrap();
+    /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
+    /// entry.set_option(WatchOption::Component("upstream".to_string()));
+    /// entry.set_option(WatchOption::Compression(Compression::Xz));
+    /// # }
+    /// ```
+    pub fn set_option(&mut self, option: crate::types::WatchOption) {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(_) => {
+                // Line-based entries are immutable, cannot set options after creation
+                // Options must be set during entry construction using EntryBuilder
+            }
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => {
+                e.set_option(option);
+            }
+        }
     }
 }
 
@@ -423,5 +534,82 @@ mod tests {
         // Parse again
         let reparsed = parse(&output).unwrap();
         assert_eq!(reparsed.version(), 4);
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_parsed_watch_file_new_v5() {
+        let wf = ParsedWatchFile::new(5).unwrap();
+        assert_eq!(wf.version(), 5);
+        assert_eq!(wf.entries().count(), 0);
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_parsed_watch_file_new_v4() {
+        let wf = ParsedWatchFile::new(4).unwrap();
+        assert_eq!(wf.version(), 4);
+        assert_eq!(wf.entries().count(), 0);
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_parsed_watch_file_add_entry_v5() {
+        let mut wf = ParsedWatchFile::new(5).unwrap();
+        let mut entry = wf.add_entry("https://github.com/foo/bar/tags", r".*/v?([\d.]+)\.tar\.gz");
+
+        assert_eq!(wf.entries().count(), 1);
+        assert_eq!(entry.url(), "https://github.com/foo/bar/tags");
+        assert_eq!(
+            entry.matching_pattern(),
+            Some(r".*/v?([\d.]+)\.tar\.gz".to_string())
+        );
+
+        // Test setting options with enum
+        entry.set_option(crate::types::WatchOption::Component("upstream".to_string()));
+        entry.set_option(crate::types::WatchOption::Compression(
+            crate::types::Compression::Xz,
+        ));
+
+        assert_eq!(entry.get_option("Component"), Some("upstream".to_string()));
+        assert_eq!(entry.get_option("Compression"), Some("xz".to_string()));
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_parsed_watch_file_add_entry_v4() {
+        let mut wf = ParsedWatchFile::new(4).unwrap();
+        let entry = wf.add_entry("https://github.com/foo/bar/tags", r".*/v?([\d.]+)\.tar\.gz");
+
+        assert_eq!(wf.entries().count(), 1);
+        assert_eq!(entry.url(), "https://github.com/foo/bar/tags");
+        assert_eq!(
+            entry.matching_pattern(),
+            Some(r".*/v?([\d.]+)\.tar\.gz".to_string())
+        );
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_parsed_watch_file_roundtrip_with_add_entry() {
+        let mut wf = ParsedWatchFile::new(5).unwrap();
+        let mut entry = wf.add_entry(
+            "https://github.com/owner/repo/tags",
+            r".*/v?([\d.]+)\.tar\.gz",
+        );
+        entry.set_option(crate::types::WatchOption::Compression(
+            crate::types::Compression::Xz,
+        ));
+
+        let output = wf.to_string();
+
+        // Parse again
+        let reparsed = parse(&output).unwrap();
+        assert_eq!(reparsed.version(), 5);
+
+        let entries: Vec<_> = reparsed.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url(), "https://github.com/owner/repo/tags");
+        assert_eq!(entries[0].get_option("Compression"), Some("xz".to_string()));
     }
 }

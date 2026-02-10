@@ -701,7 +701,7 @@ impl WatchFile {
     ///         .build()
     /// );
     /// ```
-    pub fn add_entry(&mut self, entry: Entry) {
+    pub fn add_entry(&mut self, entry: Entry) -> Entry {
         // Find the position to insert (after the last entry or after version)
         let insert_pos = self.0.children_with_tokens().count();
 
@@ -712,6 +712,15 @@ impl WatchFile {
         // Insert the entry at the end
         self.0
             .splice_children(insert_pos..insert_pos, vec![new_entry_node.into()]);
+
+        // Get the entry we just inserted by indexing directly to the position
+        Entry::cast(
+            self.0
+                .children()
+                .nth(insert_pos)
+                .expect("Entry was just inserted"),
+        )
+        .expect("Inserted node should be an Entry")
     }
 
     /// Read a watch file from a Read object.

@@ -12,6 +12,72 @@ use std::str::FromStr;
 #[cfg(test)]
 use crate::types::VersionPolicy;
 
+/// Get the linebased option key name for a WatchOption variant
+pub(crate) fn watch_option_to_key(option: &crate::types::WatchOption) -> &'static str {
+    use crate::types::WatchOption;
+
+    match option {
+        WatchOption::Component(_) => "component",
+        WatchOption::Compression(_) => "compression",
+        WatchOption::UserAgent(_) => "user-agent",
+        WatchOption::Pagemangle(_) => "pagemangle",
+        WatchOption::Uversionmangle(_) => "uversionmangle",
+        WatchOption::Dversionmangle(_) => "dversionmangle",
+        WatchOption::Dirversionmangle(_) => "dirversionmangle",
+        WatchOption::Oversionmangle(_) => "oversionmangle",
+        WatchOption::Downloadurlmangle(_) => "downloadurlmangle",
+        WatchOption::Pgpsigurlmangle(_) => "pgpsigurlmangle",
+        WatchOption::Filenamemangle(_) => "filenamemangle",
+        WatchOption::VersionPolicy(_) => "version-policy",
+        WatchOption::Searchmode(_) => "searchmode",
+        WatchOption::Mode(_) => "mode",
+        WatchOption::Pgpmode(_) => "pgpmode",
+        WatchOption::Gitexport(_) => "gitexport",
+        WatchOption::Gitmode(_) => "gitmode",
+        WatchOption::Pretty(_) => "pretty",
+        WatchOption::Ctype(_) => "ctype",
+        WatchOption::Repacksuffix(_) => "repacksuffix",
+        WatchOption::Unzipopt(_) => "unzipopt",
+        WatchOption::Script(_) => "script",
+        WatchOption::Decompress => "decompress",
+        WatchOption::Bare => "bare",
+        WatchOption::Repack => "repack",
+    }
+}
+
+/// Get the string value for a WatchOption variant
+pub(crate) fn watch_option_to_value(option: &crate::types::WatchOption) -> String {
+    use crate::types::WatchOption;
+
+    match option {
+        WatchOption::Component(v) => v.clone(),
+        WatchOption::Compression(v) => v.to_string(),
+        WatchOption::UserAgent(v) => v.clone(),
+        WatchOption::Pagemangle(v) => v.clone(),
+        WatchOption::Uversionmangle(v) => v.clone(),
+        WatchOption::Dversionmangle(v) => v.clone(),
+        WatchOption::Dirversionmangle(v) => v.clone(),
+        WatchOption::Oversionmangle(v) => v.clone(),
+        WatchOption::Downloadurlmangle(v) => v.clone(),
+        WatchOption::Pgpsigurlmangle(v) => v.clone(),
+        WatchOption::Filenamemangle(v) => v.clone(),
+        WatchOption::VersionPolicy(v) => v.to_string(),
+        WatchOption::Searchmode(v) => v.to_string(),
+        WatchOption::Mode(v) => v.to_string(),
+        WatchOption::Pgpmode(v) => v.to_string(),
+        WatchOption::Gitexport(v) => v.to_string(),
+        WatchOption::Gitmode(v) => v.to_string(),
+        WatchOption::Pretty(v) => v.to_string(),
+        WatchOption::Ctype(v) => v.to_string(),
+        WatchOption::Repacksuffix(v) => v.clone(),
+        WatchOption::Unzipopt(v) => v.clone(),
+        WatchOption::Script(v) => v.clone(),
+        WatchOption::Decompress => String::new(),
+        WatchOption::Bare => String::new(),
+        WatchOption::Repack => String::new(),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 /// Error type for parsing line-based watch files
 pub struct ParseError(pub Vec<String>);
@@ -1589,7 +1655,18 @@ impl Entry {
         // TODO: else insert new node after VERSION_POLICY (or MATCHING_PATTERN/URL if no policy)
     }
 
-    /// Set or update an option value.
+    /// Set or update an option value using a WatchOption enum.
+    ///
+    /// If the option already exists, it will be updated with the new value.
+    /// If the option doesn't exist, it will be added to the options list.
+    /// If there's no options list, one will be created.
+    pub fn set_option(&mut self, option: crate::types::WatchOption) {
+        let key = watch_option_to_key(&option);
+        let value = watch_option_to_value(&option);
+        self.set_opt(key, &value);
+    }
+
+    /// Set or update an option value using string key and value (for backward compatibility).
     ///
     /// If the option already exists, it will be updated with the new value.
     /// If the option doesn't exist, it will be added to the options list.
@@ -1653,13 +1730,49 @@ impl Entry {
         }
     }
 
-    /// Delete an option.
+    /// Delete an option using a WatchOption enum.
+    ///
+    /// Removes the option from the options list.
+    /// If the option doesn't exist, this method does nothing.
+    /// If deleting the option results in an empty options list, the entire
+    /// opts= declaration is removed.
+    pub fn del_opt(&mut self, option: crate::types::WatchOption) {
+        let key = watch_option_to_key(&option);
+        if let Some(mut ol) = self.option_list() {
+            let option_count = ol.0.children().filter(|n| n.kind() == OPTION).count();
+
+            if option_count == 1 && ol.has_option(key) {
+                // This is the last option, remove the entire OPTS_LIST from Entry
+                let opts_pos = self.0.children().position(|node| node.kind() == OPTS_LIST);
+
+                if let Some(opts_idx) = opts_pos {
+                    // Remove the OPTS_LIST
+                    self.0.splice_children(opts_idx..opts_idx + 1, vec![]);
+
+                    // Remove any leading whitespace/continuation that was after the OPTS_LIST
+                    while self.0.children_with_tokens().next().map_or(false, |e| {
+                        matches!(
+                            e,
+                            SyntaxElement::Token(t) if t.kind() == WHITESPACE || t.kind() == CONTINUATION
+                        )
+                    }) {
+                        self.0.splice_children(0..1, vec![]);
+                    }
+                }
+            } else {
+                // Defer to OptionList to remove the option
+                ol.remove_option(key);
+            }
+        }
+    }
+
+    /// Delete an option using a string key (for backward compatibility).
     ///
     /// Removes the option with the specified key from the options list.
     /// If the option doesn't exist, this method does nothing.
     /// If deleting the option results in an empty options list, the entire
     /// opts= declaration is removed.
-    pub fn del_opt(&mut self, key: &str) {
+    pub fn del_opt_str(&mut self, key: &str) {
         if let Some(mut ol) = self.option_list() {
             let option_count = ol.0.children().filter(|n| n.kind() == OPTION).count();
 
@@ -2539,7 +2652,7 @@ opts=foo=blah,bar=baz,qux=quux https://example.com/releases .*/v?(\d\S+)\.tar\.g
         assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
         assert_eq!(entry.get_option("qux"), Some("quux".to_string()));
 
-        entry.del_opt("bar");
+        entry.del_opt_str("bar");
         assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
         assert_eq!(entry.get_option("bar"), None);
         assert_eq!(entry.get_option("qux"), Some("quux".to_string()));
@@ -2561,7 +2674,7 @@ opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
         .unwrap();
 
         let mut entry = wf.entries().next().unwrap();
-        entry.del_opt("foo");
+        entry.del_opt_str("foo");
         assert_eq!(entry.get_option("foo"), None);
         assert_eq!(entry.get_option("bar"), Some("baz".to_string()));
 
@@ -2582,7 +2695,7 @@ opts=foo=blah,bar=baz https://example.com/releases .*/v?(\d\S+)\.tar\.gz
         .unwrap();
 
         let mut entry = wf.entries().next().unwrap();
-        entry.del_opt("bar");
+        entry.del_opt_str("bar");
         assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
         assert_eq!(entry.get_option("bar"), None);
 
@@ -2605,7 +2718,7 @@ opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
         let mut entry = wf.entries().next().unwrap();
         assert_eq!(entry.get_option("foo"), Some("blah".to_string()));
 
-        entry.del_opt("foo");
+        entry.del_opt_str("foo");
         assert_eq!(entry.get_option("foo"), None);
         assert_eq!(entry.option_list(), None);
 
@@ -2628,7 +2741,7 @@ opts=foo=blah https://example.com/releases .*/v?(\d\S+)\.tar\.gz
         let mut entry = wf.entries().next().unwrap();
         let original = entry.to_string();
 
-        entry.del_opt("nonexistent");
+        entry.del_opt_str("nonexistent");
         assert_eq!(entry.to_string(), original);
     }
 

@@ -18,6 +18,7 @@ impl std::fmt::Display for ParseError {
 impl std::error::Error for ParseError {}
 
 /// The type of the component
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ComponentType {
     /// Perl component
     Perl,
@@ -424,6 +425,61 @@ impl std::str::FromStr for VersionPolicy {
             }),
         }
     }
+}
+
+/// Watch file entry options
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WatchOption {
+    /// Component name for multi-tarball packages
+    Component(String),
+    /// Compression format
+    Compression(Compression),
+    /// User agent string
+    UserAgent(String),
+    /// Page mangling rules
+    Pagemangle(String),
+    /// Upstream version mangling rules
+    Uversionmangle(String),
+    /// Debian version mangling rules
+    Dversionmangle(String),
+    /// Directory version mangling rules (for mode=git)
+    Dirversionmangle(String),
+    /// Upstream version mangling rules (alternative name)
+    Oversionmangle(String),
+    /// Download URL mangling rules
+    Downloadurlmangle(String),
+    /// PGP signature URL mangling rules
+    Pgpsigurlmangle(String),
+    /// Filename mangling rules
+    Filenamemangle(String),
+    /// Version policy
+    VersionPolicy(VersionPolicy),
+    /// Search mode (html or plain)
+    Searchmode(SearchMode),
+    /// Download mode (lwp, git, svn)
+    Mode(Mode),
+    /// PGP verification mode
+    Pgpmode(PgpMode),
+    /// Git export mode
+    Gitexport(GitExport),
+    /// Git clone mode
+    Gitmode(GitMode),
+    /// Pretty format for git tags
+    Pretty(Pretty),
+    /// Component type (perl, nodejs)
+    Ctype(ComponentType),
+    /// Repackaging suffix
+    Repacksuffix(String),
+    /// Unzipopt option (deprecated)
+    Unzipopt(String),
+    /// Decompress option
+    Decompress,
+    /// Bare option (for git mode)
+    Bare,
+    /// Repack option
+    Repack,
+    /// Script to execute
+    Script(String),
 }
 
 #[cfg(test)]

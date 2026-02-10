@@ -88,6 +88,42 @@ impl WatchFile {
     pub fn inner(&self) -> &Deb822 {
         &self.0
     }
+
+    /// Get a mutable reference to the underlying Deb822 object
+    pub fn inner_mut(&mut self) -> &mut Deb822 {
+        &mut self.0
+    }
+
+    /// Add a new entry to the watch file with the given source and matching pattern.
+    /// Returns the newly created Entry.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # #[cfg(feature = "deb822")]
+    /// # {
+    /// use debian_watch::deb822::WatchFile;
+    /// use debian_watch::WatchOption;
+    ///
+    /// let mut wf = WatchFile::new();
+    /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
+    /// entry.set_option(WatchOption::Component("upstream".to_string()));
+    /// # }
+    /// ```
+    pub fn add_entry(&mut self, source: &str, matching_pattern: &str) -> Entry {
+        let mut para = self.0.add_paragraph();
+        para.set("Source", source);
+        para.set("Matching-Pattern", matching_pattern);
+
+        // Create an Entry from the paragraph we just added
+        // Get the defaults paragraph if it exists
+        let defaults = self.defaults();
+
+        Entry {
+            paragraph: para.clone(),
+            defaults,
+        }
+    }
 }
 
 impl Default for WatchFile {
@@ -195,9 +231,49 @@ impl Entry {
         }
     }
 
-    /// Set an option value in the entry
-    pub fn set_option(&mut self, key: &str, value: &str) {
-        self.paragraph.insert(key, value);
+    /// Set an option value in the entry using a WatchOption enum
+    pub fn set_option(&mut self, option: crate::types::WatchOption) {
+        use crate::types::WatchOption;
+
+        let (key, value) = match option {
+            WatchOption::Component(v) => ("Component", Some(v)),
+            WatchOption::Compression(v) => ("Compression", Some(v.to_string())),
+            WatchOption::UserAgent(v) => ("User-Agent", Some(v)),
+            WatchOption::Pagemangle(v) => ("Pagemangle", Some(v)),
+            WatchOption::Uversionmangle(v) => ("Uversionmangle", Some(v)),
+            WatchOption::Dversionmangle(v) => ("Dversionmangle", Some(v)),
+            WatchOption::Dirversionmangle(v) => ("Dirversionmangle", Some(v)),
+            WatchOption::Oversionmangle(v) => ("Oversionmangle", Some(v)),
+            WatchOption::Downloadurlmangle(v) => ("Downloadurlmangle", Some(v)),
+            WatchOption::Pgpsigurlmangle(v) => ("Pgpsigurlmangle", Some(v)),
+            WatchOption::Filenamemangle(v) => ("Filenamemangle", Some(v)),
+            WatchOption::VersionPolicy(v) => ("Version-Policy", Some(v.to_string())),
+            WatchOption::Searchmode(v) => ("Searchmode", Some(v.to_string())),
+            WatchOption::Mode(v) => ("Mode", Some(v.to_string())),
+            WatchOption::Pgpmode(v) => ("Pgpmode", Some(v.to_string())),
+            WatchOption::Gitexport(v) => ("Gitexport", Some(v.to_string())),
+            WatchOption::Gitmode(v) => ("Gitmode", Some(v.to_string())),
+            WatchOption::Pretty(v) => ("Pretty", Some(v.to_string())),
+            WatchOption::Ctype(v) => ("Ctype", Some(v.to_string())),
+            WatchOption::Repacksuffix(v) => ("Repacksuffix", Some(v)),
+            WatchOption::Unzipopt(v) => ("Unzipopt", Some(v)),
+            WatchOption::Script(v) => ("Script", Some(v)),
+            WatchOption::Decompress => ("Decompress", None),
+            WatchOption::Bare => ("Bare", None),
+            WatchOption::Repack => ("Repack", None),
+        };
+
+        if let Some(v) = value {
+            self.paragraph.set(key, &v);
+        } else {
+            // For boolean flags, set the key with empty value
+            self.paragraph.set(key, "");
+        }
+    }
+
+    /// Set an option value in the entry using string key and value (for backward compatibility)
+    pub fn set_option_str(&mut self, key: &str, value: &str) {
+        self.paragraph.set(key, value);
     }
 
     /// Delete an option from the entry

@@ -25,11 +25,20 @@
 //! assert_eq!(entry.matching_pattern().as_deref(), Some(".*/v?(\\d\\S+)\\.tar\\.gz"));
 //! ```
 
-mod convert;
 mod lex;
 mod parse;
-mod parse_v5;
-mod types_v5;
+
+#[cfg(feature = "deb822")]
+mod convert;
+#[cfg(feature = "deb822")]
+pub mod deb822;
+#[cfg(feature = "discover")]
+pub mod discover;
+pub mod mangle;
+#[cfg(feature = "pgp")]
+pub mod pgp;
+pub mod release;
+pub mod search;
 
 /// Any watch files without a version are assumed to be
 /// version 1.
@@ -39,6 +48,10 @@ mod traits;
 mod types;
 
 pub use traits::*;
+/// Default user agent string used for HTTP requests
+pub const DEFAULT_USER_AGENT: &str = concat!("debian-watch-rs/", env!("CARGO_PKG_VERSION"));
+
+pub use release::Release;
 pub use types::*;
 
 /// Let's start with defining all kinds of tokens and
@@ -64,6 +77,7 @@ pub(crate) enum SyntaxKind {
     ENTRY,            // "opts=foo=blah https://foo.com/bar .*/v?(\d\S+)\.tar\.gz\n"
     OPTS_LIST,        // "opts=foo=blah"
     OPTION,           // "foo=blah"
+    OPTION_SEPARATOR, // "," (comma separator between options)
     URL,              // "https://foo.com/bar"
     MATCHING_PATTERN, // ".*/v?(\d\S+)\.tar\.gz"
     VERSION_POLICY,   // "debian"
@@ -77,11 +91,16 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
-pub use crate::convert::{convert_to_v5, ConversionError};
 pub use crate::parse::Entry;
+pub use crate::parse::EntryBuilder;
+pub use crate::parse::ParseError;
 pub use crate::parse::WatchFile;
 pub use crate::parse::{parse_watch_file, Parse};
-pub use crate::parse_v5::{EntryV5, WatchFileV5};
+
+#[cfg(feature = "deb822")]
+pub use crate::convert::{convert_to_v5, ConversionError};
+#[cfg(feature = "deb822")]
+pub use crate::deb822::{EntryV5, WatchFileV5};
 
 #[cfg(test)]
 mod tests {
@@ -109,6 +128,25 @@ mod tests {
 
         // Test setting version on a file without version
         let mut wf = super::WatchFile::new(None);
+        assert_eq!(wf.version(), super::DEFAULT_VERSION);
+
+        wf.set_version(4);
+        assert_eq!(wf.version(), 4);
+        assert_eq!("version=4\n", wf.to_string());
+    }
+
+    #[test]
+    fn test_set_version_on_parsed() {
+        // Test that parsed WatchFiles can be mutated
+        let mut wf: super::WatchFile = "version=4\n".parse().unwrap();
+        assert_eq!(wf.version(), 4);
+
+        wf.set_version(5);
+        assert_eq!(wf.version(), 5);
+        assert_eq!("version=5\n", wf.to_string());
+
+        // Test setting version on a parsed file without version
+        let mut wf: super::WatchFile = "".parse().unwrap();
         assert_eq!(wf.version(), super::DEFAULT_VERSION);
 
         wf.set_version(4);

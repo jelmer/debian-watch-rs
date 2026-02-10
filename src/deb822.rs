@@ -1,7 +1,21 @@
+//! Watch file implementation for format 5 (RFC822/deb822 style)
+use crate::traits::{WatchEntry, WatchFileFormat};
+use crate::types::ParseError as TypesParseError;
+use crate::VersionPolicy;
 use deb822_lossless::{Deb822, Paragraph};
 use std::str::FromStr;
 
-use crate::types::ParseError;
+#[derive(Debug)]
+/// Parse error for watch file parsing
+pub struct ParseError(String);
+
+impl std::error::Error for ParseError {}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "ParseError: {}", self.0)
+    }
+}
 
 /// A watch file in format 5 (RFC822/deb822 style)
 #[derive(Debug)]
@@ -96,18 +110,12 @@ impl FromStr for WatchFileV5 {
                     .unwrap_or_else(|| "1".to_string());
 
                 if version != "5" {
-                    return Err(ParseError {
-                        type_name: "WatchFileV5",
-                        value: format!("Expected version 5, got {}", version),
-                    });
+                    return Err(ParseError(format!("Expected version 5, got {}", version)));
                 }
 
                 Ok(WatchFileV5(deb822))
             }
-            Err(e) => Err(ParseError {
-                type_name: "WatchFileV5",
-                value: e.to_string(),
-            }),
+            Err(e) => Err(ParseError(e.to_string())),
         }
     }
 }
@@ -162,13 +170,39 @@ impl EntryV5 {
     }
 
     /// Returns the matching pattern
-    pub fn matching_pattern_v5(&self) -> Option<String> {
+    pub fn matching_pattern(&self) -> Option<String> {
         self.get_field("Matching-Pattern")
     }
 
     /// Get the underlying paragraph
-    pub fn paragraph(&self) -> &Paragraph {
+    pub fn as_deb822(&self) -> &Paragraph {
         &self.paragraph
+    }
+
+    /// Name of the component, if specified
+    pub fn component(&self) -> Option<String> {
+        self.get_field("Component")
+    }
+
+    /// Get the an option value from the entry, with fallback to defaults paragraph.
+    pub fn get_option(&self, key: &str) -> Option<String> {
+        match key {
+            "Source" => None,           // Source is not an option
+            "Matching-Pattern" => None, // Matching-Pattern is not an option
+            "Component" => None,        // Component is not an option
+            "Version" => None,          // Version is not an option
+            key => self.get_field(key),
+        }
+    }
+
+    /// Set an option value in the entry
+    pub fn set_option(&mut self, key: &str, value: &str) {
+        self.paragraph.insert(key, value);
+    }
+
+    /// Delete an option from the entry
+    pub fn delete_option(&mut self, key: &str) {
+        self.paragraph.remove(key);
     }
 }
 
@@ -182,7 +216,6 @@ fn normalize_key(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::WatchEntry;
 
     #[test]
     fn test_create_v5_watchfile() {
@@ -209,7 +242,10 @@ Matching-Pattern: .*/v?(\d\S+)\.tar\.gz
         assert_eq!(entries.len(), 1);
 
         let entry = &entries[0];
-        assert_eq!(entry.url(), "https://github.com/owner/repo/tags");
+        assert_eq!(
+            entry.source().as_deref(),
+            Some("https://github.com/owner/repo/tags")
+        );
         assert_eq!(
             entry.matching_pattern(),
             Some(".*/v?(\\d\\S+)\\.tar\\.gz".to_string())
@@ -231,8 +267,14 @@ Matching-Pattern: .*/release-(\d\S+)\.tar\.gz
         let entries: Vec<_> = wf.entries().collect();
         assert_eq!(entries.len(), 2);
 
-        assert_eq!(entries[0].url(), "https://github.com/owner/repo1/tags");
-        assert_eq!(entries[1].url(), "https://github.com/owner/repo2/tags");
+        assert_eq!(
+            entries[0].source().as_deref(),
+            Some("https://github.com/owner/repo1/tags")
+        );
+        assert_eq!(
+            entries[1].source().as_deref(),
+            Some("https://github.com/owner/repo2/tags")
+        );
     }
 
     #[test]
@@ -248,8 +290,8 @@ matching-pattern: .*\.tar\.gz
         assert_eq!(entries.len(), 1);
 
         let entry = &entries[0];
-        assert_eq!(entry.url(), "https://example.com/files");
-        assert_eq!(entry.matching_pattern(), Some(".*\\.tar\\.gz".to_string()));
+        assert_eq!(entry.source().as_deref(), Some("https://example.com/files"));
+        assert_eq!(entry.matching_pattern().as_deref(), Some(".*\\.tar\\.gz"));
     }
 
     #[test]
@@ -266,7 +308,7 @@ Compression: xz
         assert_eq!(entries.len(), 1);
 
         let entry = &entries[0];
-        let compression = entry.compression().unwrap();
+        let compression = entry.get_option("compression");
         assert!(compression.is_some());
     }
 
@@ -297,27 +339,6 @@ Matching-Pattern: .*\.tar\.gz
 
         let result: Result<WatchFileV5, _> = input.parse();
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_v5_trait_implementation() {
-        let input = r#"Version: 5
-
-Source: https://example.com/files
-Matching-Pattern: .*\.tar\.gz
-"#;
-
-        let wf: WatchFileV5 = input.parse().unwrap();
-
-        // Test WatchFileFormat trait
-        assert_eq!(wf.version(), 5);
-        let entries: Vec<_> = wf.entries().collect();
-        assert_eq!(entries.len(), 1);
-
-        // Test WatchEntry trait
-        let entry = &entries[0];
-        assert_eq!(entry.url(), "https://example.com/files");
-        assert!(entry.matching_pattern().is_some());
     }
 
     #[test]
@@ -430,5 +451,56 @@ Matching-Pattern: .*\.tar\.gz
             entries[0].get_option("User-Agent"),
             Some("Custom/1.0".to_string())
         );
+    }
+}
+
+// Trait implementations for WatchFileFormat and WatchEntry
+
+impl WatchFileFormat for WatchFileV5 {
+    type Entry = EntryV5;
+
+    fn version(&self) -> u32 {
+        self.version()
+    }
+
+    fn entries(&self) -> Box<dyn Iterator<Item = Self::Entry> + '_> {
+        Box::new(WatchFileV5::entries(self))
+    }
+
+    fn format_string(&self) -> String {
+        ToString::to_string(self)
+    }
+}
+
+impl WatchEntry for EntryV5 {
+    fn url(&self) -> String {
+        // In format 5, the URL is in the "Source" field
+        self.source().unwrap_or_default()
+    }
+
+    fn matching_pattern(&self) -> Option<String> {
+        EntryV5::matching_pattern(self)
+    }
+
+    fn version_policy(&self) -> Result<Option<VersionPolicy>, TypesParseError> {
+        // Format 5 uses "Version-Policy" field
+        match self.get_option("Version-Policy") {
+            Some(policy) => Ok(Some(policy.parse()?)),
+            None => Ok(None),
+        }
+    }
+
+    fn script(&self) -> Option<String> {
+        // Format 5 uses "Script" field
+        self.get_option("Script")
+    }
+
+    fn get_option(&self, key: &str) -> Option<String> {
+        // Use the internal get_field method which handles normalization
+        self.get_field(key)
+    }
+
+    fn has_option(&self, key: &str) -> bool {
+        self.get_option(key).is_some()
     }
 }

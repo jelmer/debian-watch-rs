@@ -12,7 +12,7 @@ pub trait WatchFileFormat {
     fn entries(&self) -> Box<dyn Iterator<Item = Self::Entry> + '_>;
 
     /// Convert the watch file back to its string representation
-    fn to_string(&self) -> String;
+    fn format_string(&self) -> String;
 }
 
 /// Common trait for watch file entries across all formats

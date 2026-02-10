@@ -12,46 +12,64 @@ use std::error::Error;
 #[derive(Debug)]
 pub enum DiscoveryError {
     /// HTTP request failed
-    HttpError(String),
+    HttpError(reqwest::Error),
     /// Pattern matching failed
-    PatternError(String),
+    PatternError(MangleError),
     /// Missing required field
     MissingField(String),
     /// URL parsing error
-    UrlError(String),
+    UrlError(url::ParseError),
     /// IO error
-    IoError(String),
+    IoError(std::io::Error),
 }
+
+use crate::mangle::MangleError;
 
 impl std::fmt::Display for DiscoveryError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            DiscoveryError::HttpError(msg) => write!(f, "HTTP error: {}", msg),
-            DiscoveryError::PatternError(msg) => write!(f, "Pattern error: {}", msg),
+            DiscoveryError::HttpError(e) => write!(f, "HTTP error: {}", e),
+            DiscoveryError::PatternError(e) => write!(f, "Pattern error: {}", e),
             DiscoveryError::MissingField(msg) => write!(f, "Missing field: {}", msg),
-            DiscoveryError::UrlError(msg) => write!(f, "URL error: {}", msg),
-            DiscoveryError::IoError(msg) => write!(f, "IO error: {}", msg),
+            DiscoveryError::UrlError(e) => write!(f, "URL error: {}", e),
+            DiscoveryError::IoError(e) => write!(f, "IO error: {}", e),
         }
     }
 }
 
-impl Error for DiscoveryError {}
+impl Error for DiscoveryError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            DiscoveryError::HttpError(e) => Some(e),
+            DiscoveryError::PatternError(e) => Some(e),
+            DiscoveryError::MissingField(_) => None,
+            DiscoveryError::UrlError(e) => Some(e),
+            DiscoveryError::IoError(e) => Some(e),
+        }
+    }
+}
 
 impl From<std::io::Error> for DiscoveryError {
     fn from(err: std::io::Error) -> Self {
-        DiscoveryError::IoError(err.to_string())
+        DiscoveryError::IoError(err)
     }
 }
 
 impl From<reqwest::Error> for DiscoveryError {
     fn from(err: reqwest::Error) -> Self {
-        DiscoveryError::HttpError(err.to_string())
+        DiscoveryError::HttpError(err)
     }
 }
 
 impl From<url::ParseError> for DiscoveryError {
     fn from(err: url::ParseError) -> Self {
-        DiscoveryError::UrlError(err.to_string())
+        DiscoveryError::UrlError(err)
+    }
+}
+
+impl From<MangleError> for DiscoveryError {
+    fn from(err: MangleError) -> Self {
+        DiscoveryError::PatternError(err)
     }
 }
 
@@ -108,9 +126,7 @@ impl ParsedEntry {
         package: impl FnOnce() -> String + Send,
         client: Option<&reqwest::Client>,
     ) -> Result<Vec<Release>, DiscoveryError> {
-        let url = self
-            .format_url(package)
-            .map_err(|e| DiscoveryError::UrlError(e.to_string()))?;
+        let url = self.format_url(package)?;
         let user_agent = self
             .user_agent()
             .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
@@ -120,30 +136,19 @@ impl ParsedEntry {
         let http_client = if let Some(c) = client {
             c
         } else {
-            default_client = reqwest::Client::builder()
-                .user_agent(user_agent)
-                .build()
-                .map_err(|e| DiscoveryError::HttpError(e.to_string()))?;
+            default_client = reqwest::Client::builder().user_agent(user_agent).build()?;
             &default_client
         };
 
         // Fetch the URL
-        let response = http_client
-            .get(url.as_str())
-            .send()
-            .await
-            .map_err(|e| DiscoveryError::HttpError(e.to_string()))?;
+        let response = http_client.get(url.as_str()).send().await?;
 
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| DiscoveryError::HttpError(e.to_string()))?;
+        let body = response.bytes().await?;
 
         // Apply pagemangle if present
         let mangled_body = if let Some(mangle) = self.pagemangle() {
             let page_str = String::from_utf8_lossy(&body);
-            let result = crate::mangle::apply_mangle(&mangle, &page_str)
-                .map_err(|e| DiscoveryError::PatternError(e.to_string()))?;
+            let result = crate::mangle::apply_mangle(&mangle, &page_str)?;
             result.into_bytes()
         } else {
             body.to_vec()
@@ -176,46 +181,35 @@ impl ParsedEntry {
         for (version, full_url) in results {
             // Apply uversionmangle
             let mangled_version = if let Some(mangle) = self.uversionmangle() {
-                crate::mangle::apply_mangle(&mangle, &version)
-                    .map_err(|e| DiscoveryError::PatternError(e.to_string()))?
+                crate::mangle::apply_mangle(&mangle, &version)?
             } else {
                 version
             };
 
             // Apply downloadurlmangle
             let mangled_url = if let Some(mangle) = self.downloadurlmangle() {
-                crate::mangle::apply_mangle(&mangle, &full_url)
-                    .map_err(|e| DiscoveryError::PatternError(e.to_string()))?
+                crate::mangle::apply_mangle(&mangle, &full_url)?
             } else {
                 full_url
             };
 
             // Apply pgpsigurlmangle if present
             let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(
-                    crate::mangle::apply_mangle(&mangle, &mangled_url)
-                        .map_err(|e| DiscoveryError::PatternError(e.to_string()))?,
-                )
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
             // Apply filenamemangle if present
             let target_filename = if let Some(mangle) = self.filenamemangle() {
-                Some(
-                    crate::mangle::apply_mangle(&mangle, &mangled_url)
-                        .map_err(|e| DiscoveryError::PatternError(e.to_string()))?,
-                )
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
             // Apply oversionmangle if present
             let package_version = if let Some(mangle) = self.oversionmangle() {
-                Some(
-                    crate::mangle::apply_mangle(&mangle, &mangled_version)
-                        .map_err(|e| DiscoveryError::PatternError(e.to_string()))?,
-                )
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_version)?)
             } else {
                 None
             };
@@ -261,9 +255,7 @@ impl ParsedEntry {
         client: Option<&reqwest::blocking::Client>,
     ) -> Result<Vec<Release>, DiscoveryError> {
         // Get the URL and apply package substitution
-        let url = self
-            .format_url(package)
-            .map_err(|e| DiscoveryError::UrlError(e.to_string()))?;
+        let url = self.format_url(package)?;
 
         // Get user agent
         let user_agent = self
@@ -277,26 +269,19 @@ impl ParsedEntry {
         } else {
             default_client = reqwest::blocking::Client::builder()
                 .user_agent(user_agent)
-                .build()
-                .map_err(|e| DiscoveryError::HttpError(e.to_string()))?;
+                .build()?;
             &default_client
         };
 
         // Fetch the URL
-        let response = http_client
-            .get(url.as_str())
-            .send()
-            .map_err(|e| DiscoveryError::HttpError(e.to_string()))?;
+        let response = http_client.get(url.as_str()).send()?;
 
-        let body = response
-            .bytes()
-            .map_err(|e| DiscoveryError::HttpError(e.to_string()))?;
+        let body = response.bytes()?;
 
         // Apply pagemangle if present
         let mangled_body = if let Some(mangle) = self.pagemangle() {
             let page_str = String::from_utf8_lossy(&body);
-            let result = crate::mangle::apply_mangle(&mangle, &page_str)
-                .map_err(|e| DiscoveryError::PatternError(e.to_string()))?;
+            let result = crate::mangle::apply_mangle(&mangle, &page_str)?;
             result.into_bytes()
         } else {
             body.to_vec()
@@ -329,46 +314,35 @@ impl ParsedEntry {
         for (version, full_url) in results {
             // Apply uversionmangle
             let mangled_version = if let Some(mangle) = self.uversionmangle() {
-                crate::mangle::apply_mangle(&mangle, &version)
-                    .map_err(|e| DiscoveryError::PatternError(e.to_string()))?
+                crate::mangle::apply_mangle(&mangle, &version)?
             } else {
                 version
             };
 
             // Apply downloadurlmangle
             let mangled_url = if let Some(mangle) = self.downloadurlmangle() {
-                crate::mangle::apply_mangle(&mangle, &full_url)
-                    .map_err(|e| DiscoveryError::PatternError(e.to_string()))?
+                crate::mangle::apply_mangle(&mangle, &full_url)?
             } else {
                 full_url
             };
 
             // Apply pgpsigurlmangle if present
             let pgpsigurl = if let Some(mangle) = self.pgpsigurlmangle() {
-                Some(
-                    crate::mangle::apply_mangle(&mangle, &mangled_url)
-                        .map_err(|e| DiscoveryError::PatternError(e.to_string()))?,
-                )
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
             // Apply filenamemangle if present
             let target_filename = if let Some(mangle) = self.filenamemangle() {
-                Some(
-                    crate::mangle::apply_mangle(&mangle, &mangled_url)
-                        .map_err(|e| DiscoveryError::PatternError(e.to_string()))?,
-                )
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_url)?)
             } else {
                 None
             };
 
             // Apply oversionmangle if present
             let package_version = if let Some(mangle) = self.oversionmangle() {
-                Some(
-                    crate::mangle::apply_mangle(&mangle, &mangled_version)
-                        .map_err(|e| DiscoveryError::PatternError(e.to_string()))?,
-                )
+                Some(crate::mangle::apply_mangle(&mangle, &mangled_version)?)
             } else {
                 None
             };
@@ -450,7 +424,8 @@ mod tests {
         let err = DiscoveryError::MissingField("url".to_string());
         assert_eq!(err.to_string(), "Missing field: url");
 
-        let err = DiscoveryError::PatternError("invalid regex".to_string());
-        assert_eq!(err.to_string(), "Pattern error: invalid regex");
+        let err =
+            DiscoveryError::PatternError(MangleError::RegexError("invalid regex".to_string()));
+        assert_eq!(err.to_string(), "Pattern error: regex error: invalid regex");
     }
 }

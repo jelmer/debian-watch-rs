@@ -1,5 +1,7 @@
 use crate::lex::lex;
-use crate::types::{ComponentType, Compression, GitExport, GitMode, Mode, PgpMode, Pretty, SearchMode};
+use crate::types::{
+    ComponentType, Compression, GitExport, GitMode, Mode, PgpMode, Pretty, SearchMode,
+};
 use crate::SyntaxKind;
 use crate::SyntaxKind::*;
 use crate::DEFAULT_VERSION;

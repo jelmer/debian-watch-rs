@@ -220,7 +220,6 @@ fn option_to_field_name(option: &str) -> Result<String, ConversionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::WatchEntry;
 
     #[test]
     fn test_simple_conversion() {

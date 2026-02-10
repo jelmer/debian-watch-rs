@@ -1,5 +1,5 @@
 use crate::lex::lex;
-use crate::types::*;
+use crate::types::{ComponentType, Compression, GitExport, GitMode, Mode, PgpMode, Pretty, SearchMode};
 use crate::SyntaxKind;
 use crate::SyntaxKind::*;
 use crate::DEFAULT_VERSION;
@@ -7,12 +7,12 @@ use std::io::Read;
 use std::marker::PhantomData;
 use std::str::FromStr;
 
-#[cfg(feature = "discover")]
-use crate::discover::Discover;
+#[cfg(test)]
+use crate::types::VersionPolicy;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-/// Error type for parse errors
-pub struct ParseError(Vec<String>);
+/// Error type for parsing line-based watch files
+pub struct ParseError(pub Vec<String>);
 
 impl std::fmt::Display for ParseError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
@@ -179,7 +179,7 @@ fn parse(text: &str) -> InternalParse {
             self.builder.start_node(ENTRY.into());
             self.parse_options_list();
             for i in 0..4 {
-                if self.current() == Some(NEWLINE) {
+                if self.current() == Some(NEWLINE) || self.current().is_none() {
                     break;
                 }
                 if self.current() == Some(CONTINUATION) {
@@ -240,7 +240,8 @@ fn parse(text: &str) -> InternalParse {
                     self.bump();
                 }
                 self.builder.finish_node();
-            } else {
+            } else if self.current().is_some() {
+                // Consume the newline if present (but EOF is also okay)
                 self.bump();
             }
             self.builder.finish_node();
@@ -536,7 +537,8 @@ impl std::fmt::Display for OptionList {
 }
 
 impl WatchFile {
-    /// Access the underlying syntax node (needed for conversion)
+    /// Access the underlying syntax node (needed for conversion to deb822 format)
+    #[cfg(feature = "deb822")]
     pub(crate) fn syntax(&self) -> &SyntaxNode {
         &self.0
     }
@@ -630,7 +632,8 @@ impl WatchFile {
         let mut all_releases = Vec::new();
 
         for entry in self.entries() {
-            let releases = entry.discover(|| package()).await?;
+            let parsed_entry = crate::parse::ParsedEntry::LineBased(entry);
+            let releases = parsed_entry.discover(|| package()).await?;
             all_releases.push(releases);
         }
 
@@ -662,7 +665,8 @@ impl WatchFile {
         let mut all_releases = Vec::new();
 
         for entry in self.entries() {
-            let releases = entry.discover_blocking(|| package())?;
+            let parsed_entry = crate::parse::ParsedEntry::LineBased(entry);
+            let releases = parsed_entry.discover_blocking(|| package())?;
             all_releases.push(releases);
         }
 
@@ -923,7 +927,8 @@ impl EntryBuilder {
 }
 
 impl Entry {
-    /// Access the underlying syntax node (needed for conversion)
+    /// Access the underlying syntax node (needed for conversion to deb822 format)
+    #[cfg(feature = "deb822")]
     pub(crate) fn syntax(&self) -> &SyntaxNode {
         &self.0
     }
@@ -1698,7 +1703,8 @@ impl OptionList {
     }
 
     /// Returns an iterator over all options as (key, value) pairs.
-    /// This is a convenience method for code that needs key-value tuples.
+    /// This is a convenience method for code that needs key-value tuples (used for conversion to deb822 format).
+    #[cfg(feature = "deb822")]
     pub(crate) fn iter_key_values(&self) -> impl Iterator<Item = (String, String)> + '_ {
         self.options().filter_map(|opt| {
             if let (Some(key), Some(value)) = (opt.key(), opt.value()) {
@@ -3353,52 +3359,5 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
         assert_eq!(entry.url(), "https://example.com/releases");
         assert_eq!(entry.matching_pattern().as_deref(), Some("(?:.*?/)?v?(\\d"));
         assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
-    }
-}
-
-// Trait implementations for formats 1-4
-
-impl crate::traits::WatchFileFormat for WatchFile {
-    type Entry = Entry;
-
-    fn version(&self) -> u32 {
-        self.version()
-    }
-
-    fn entries(&self) -> Box<dyn Iterator<Item = Self::Entry> + '_> {
-        Box::new(WatchFile::entries(self))
-    }
-
-    fn format_string(&self) -> String {
-        ToString::to_string(self)
-    }
-}
-
-impl crate::traits::WatchEntry for Entry {
-    fn url(&self) -> String {
-        Entry::url(self)
-    }
-
-    fn matching_pattern(&self) -> Option<String> {
-        Entry::matching_pattern(self)
-    }
-
-    fn version_policy(&self) -> Result<Option<crate::VersionPolicy>, crate::types::ParseError> {
-        Entry::version(self).map_err(|e| crate::types::ParseError {
-            type_name: "VersionPolicy",
-            value: e,
-        })
-    }
-
-    fn script(&self) -> Option<String> {
-        Entry::script(self)
-    }
-
-    fn get_option(&self, key: &str) -> Option<String> {
-        Entry::get_option(self, key)
-    }
-
-    fn has_option(&self, key: &str) -> bool {
-        Entry::has_option(self, key)
     }
 }

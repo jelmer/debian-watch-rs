@@ -1,5 +1,4 @@
 //! Watch file implementation for format 5 (RFC822/deb822 style)
-use crate::traits::{WatchEntry, WatchFileFormat};
 use crate::types::ParseError as TypesParseError;
 use crate::VersionPolicy;
 use deb822_lossless::{Deb822, Paragraph};
@@ -22,6 +21,7 @@ impl std::fmt::Display for ParseError {
 pub struct WatchFile(Deb822);
 
 /// An entry in a format 5 watch file
+#[derive(Debug)]
 pub struct Entry {
     paragraph: Paragraph,
     defaults: Option<Paragraph>,
@@ -203,6 +203,24 @@ impl Entry {
     /// Delete an option from the entry
     pub fn delete_option(&mut self, key: &str) {
         self.paragraph.remove(key);
+    }
+
+    /// Get the URL (same as source() but named url() for consistency)
+    pub fn url(&self) -> String {
+        self.source().unwrap_or_default()
+    }
+
+    /// Get the version policy
+    pub fn version_policy(&self) -> Result<Option<VersionPolicy>, TypesParseError> {
+        match self.get_field("Version-Policy") {
+            Some(policy) => Ok(Some(policy.parse()?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get the script
+    pub fn script(&self) -> Option<String> {
+        self.get_field("Script")
     }
 }
 
@@ -452,55 +470,176 @@ Matching-Pattern: .*\.tar\.gz
             Some("Custom/1.0".to_string())
         );
     }
-}
 
-// Trait implementations for WatchFileFormat and WatchEntry
+    #[test]
+    fn test_v5_with_uversionmangle() {
+        let input = r#"Version: 5
 
-impl WatchFileFormat for WatchFile {
-    type Entry = Entry;
+Source: https://pypi.org/project/foo/
+Matching-Pattern: foo-(\d+\.\d+)\.tar\.gz
+Uversionmangle: s/\.0+$//
+"#;
 
-    fn version(&self) -> u32 {
-        self.version()
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.get_option("Uversionmangle"),
+            Some("s/\\.0+$//".to_string())
+        );
     }
 
-    fn entries(&self) -> Box<dyn Iterator<Item = Self::Entry> + '_> {
-        Box::new(WatchFile::entries(self))
+    #[test]
+    fn test_v5_with_filenamemangle() {
+        let input = r#"Version: 5
+
+Source: https://example.com/files
+Matching-Pattern: .*\.tar\.gz
+Filenamemangle: s/.*\///;s/@PACKAGE@-(.*)\.tar\.gz/foo_$1.orig.tar.gz/
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.get_option("Filenamemangle"),
+            Some("s/.*\\///;s/@PACKAGE@-(.*)\\.tar\\.gz/foo_$1.orig.tar.gz/".to_string())
+        );
     }
 
-    fn format_string(&self) -> String {
-        ToString::to_string(self)
-    }
-}
+    #[test]
+    fn test_v5_with_searchmode() {
+        let input = r#"Version: 5
 
-impl WatchEntry for Entry {
-    fn url(&self) -> String {
-        // In format 5, the URL is in the "Source" field
-        self.source().unwrap_or_default()
-    }
+Source: https://example.com/files
+Matching-Pattern: foo-(\d[\d.]*)\.tar\.gz
+Searchmode: plain
+"#;
 
-    fn matching_pattern(&self) -> Option<String> {
-        Entry::matching_pattern(self)
-    }
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
 
-    fn version_policy(&self) -> Result<Option<VersionPolicy>, TypesParseError> {
-        // Format 5 uses "Version-Policy" field
-        match self.get_option("Version-Policy") {
-            Some(policy) => Ok(Some(policy.parse()?)),
-            None => Ok(None),
-        }
+        let entry = &entries[0];
+        assert_eq!(entry.get_field("Searchmode").as_deref(), Some("plain"));
     }
 
-    fn script(&self) -> Option<String> {
-        // Format 5 uses "Script" field
-        self.get_option("Script")
+    #[test]
+    fn test_v5_with_version_policy() {
+        let input = r#"Version: 5
+
+Source: https://example.com/files
+Matching-Pattern: .*\.tar\.gz
+Version-Policy: debian
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        let policy = entry.version_policy();
+        assert!(policy.is_ok());
+        assert_eq!(format!("{:?}", policy.unwrap().unwrap()), "Debian");
     }
 
-    fn get_option(&self, key: &str) -> Option<String> {
-        // Use the internal get_field method which handles normalization
-        self.get_field(key)
+    #[test]
+    fn test_v5_multiple_mangles() {
+        let input = r#"Version: 5
+
+Source: https://example.com/files
+Matching-Pattern: .*\.tar\.gz
+Uversionmangle: s/^v//;s/\.0+$//
+Dversionmangle: s/\+dfsg\d*$//
+Filenamemangle: s/.*/foo-$1.tar.gz/
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.get_option("Uversionmangle"),
+            Some("s/^v//;s/\\.0+$//".to_string())
+        );
+        assert_eq!(
+            entry.get_option("Dversionmangle"),
+            Some("s/\\+dfsg\\d*$//".to_string())
+        );
+        assert_eq!(
+            entry.get_option("Filenamemangle"),
+            Some("s/.*/foo-$1.tar.gz/".to_string())
+        );
     }
 
-    fn has_option(&self, key: &str) -> bool {
-        self.get_option(key).is_some()
+    #[test]
+    fn test_v5_with_pgpmode() {
+        let input = r#"Version: 5
+
+Source: https://example.com/files
+Matching-Pattern: .*\.tar\.gz
+Pgpmode: auto
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(entry.get_option("Pgpmode"), Some("auto".to_string()));
+    }
+
+    #[test]
+    fn test_v5_with_comments() {
+        let input = r#"Version: 5
+
+# This is a comment about the entry
+Source: https://example.com/files
+Matching-Pattern: .*\.tar\.gz
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        // Verify roundtrip preserves comments
+        let output = wf.to_string();
+        assert!(output.contains("# This is a comment about the entry"));
+    }
+
+    #[test]
+    fn test_v5_empty_after_version() {
+        let input = "Version: 5\n";
+
+        let wf: WatchFile = input.parse().unwrap();
+        assert_eq!(wf.version(), 5);
+
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 0);
+    }
+
+    #[test]
+    fn test_v5_trait_url() {
+        let input = r#"Version: 5
+
+Source: https://example.com/files/@PACKAGE@
+Matching-Pattern: .*\.tar\.gz
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        // Test url() method
+        assert_eq!(
+            entry.source().as_deref(),
+            Some("https://example.com/files/@PACKAGE@")
+        );
     }
 }

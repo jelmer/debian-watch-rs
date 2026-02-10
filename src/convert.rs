@@ -1,7 +1,6 @@
 //! Conversion between watch file formats
 
-use crate::deb822::WatchFileV5;
-use crate::parse::{Entry, WatchFile};
+use crate::linebased::{Entry, WatchFile};
 use crate::SyntaxKind::*;
 use deb822_lossless::{Deb822, Paragraph};
 
@@ -33,7 +32,7 @@ impl std::error::Error for ConversionError {}
 ///
 /// This function preserves comments from the original file by inserting them
 /// into the CST of the generated v5 watch file.
-pub fn convert_to_v5(watch_file: &WatchFile) -> Result<WatchFileV5, ConversionError> {
+pub fn convert_to_v5(watch_file: &WatchFile) -> Result<crate::deb822::WatchFile, ConversionError> {
     // Create a Deb822 with version header as first paragraph
     let mut paragraphs = vec![vec![("Version", "5")].into_iter().collect()];
 
@@ -73,7 +72,7 @@ pub fn convert_to_v5(watch_file: &WatchFile) -> Result<WatchFileV5, ConversionEr
         }
     }
 
-    // Convert to WatchFileV5
+    // Convert to crate::deb822::WatchFile
     let output = deb822.to_string();
     output
         .parse()
@@ -221,7 +220,6 @@ fn option_to_field_name(option: &str) -> Result<String, ConversionError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::traits::WatchEntry;
 
     #[test]
     fn test_simple_conversion() {
@@ -338,7 +336,7 @@ opts=compression=xz,component=foo https://example.com/files .*/(\d+)\.tar\.gz
 
         // Verify the v5 file can be parsed back
         let v5_str = ToString::to_string(&v5_file);
-        let v5_reparsed: WatchFileV5 = v5_str.parse().unwrap();
+        let v5_reparsed: crate::deb822::WatchFile = v5_str.parse().unwrap();
 
         let entries: Vec<_> = v5_reparsed.entries().collect();
         assert_eq!(entries.len(), 1);

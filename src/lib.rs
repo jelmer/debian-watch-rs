@@ -3,16 +3,18 @@
 //!
 //! # Example
 //!
-//! ```rust
-//! let wf = debian_watch::WatchFile::new(None);
+//! ```rust,ignore
+//! // For line-based formats (v1-4):
+//! // Note: This example requires the "linebased" feature (enabled by default)
+//! let wf = debian_watch::linebased::WatchFile::new(None);
 //! assert_eq!(wf.version(), debian_watch::DEFAULT_VERSION);
 //! assert_eq!("", wf.to_string());
 //!
-//! let wf = debian_watch::WatchFile::new(Some(4));
+//! let wf = debian_watch::linebased::WatchFile::new(Some(4));
 //! assert_eq!(wf.version(), 4);
 //! assert_eq!("version=4\n", wf.to_string());
 //!
-//! let wf: debian_watch::WatchFile = r#"version=4
+//! let wf: debian_watch::linebased::WatchFile = r#"version=4
 //! opts=foo=blah https://foo.com/bar .*/v?(\d\S+)\.tar\.gz
 //! "#.parse().unwrap();
 //! assert_eq!(wf.version(), 4);
@@ -25,10 +27,13 @@
 //! assert_eq!(entry.matching_pattern().as_deref(), Some(".*/v?(\\d\\S+)\\.tar\\.gz"));
 //! ```
 
+#[cfg(feature = "linebased")]
 mod lex;
-mod parse;
+#[cfg(feature = "linebased")]
+/// Line-based watch file format parser (versions 1-4)
+pub mod linebased;
 
-#[cfg(feature = "deb822")]
+#[cfg(all(feature = "deb822", feature = "linebased"))]
 mod convert;
 #[cfg(feature = "deb822")]
 pub mod deb822;
@@ -44,10 +49,9 @@ pub mod search;
 /// version 1.
 pub const DEFAULT_VERSION: u32 = 1;
 
-mod traits;
+pub mod parse;
+mod subst;
 mod types;
-
-pub use traits::*;
 /// Default user agent string used for HTTP requests
 pub const DEFAULT_USER_AGENT: &str = concat!("debian-watch-rs/", env!("CARGO_PKG_VERSION"));
 
@@ -91,27 +95,25 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
     }
 }
 
-pub use crate::parse::Entry;
-pub use crate::parse::EntryBuilder;
-pub use crate::parse::ParseError;
-pub use crate::parse::WatchFile;
-pub use crate::parse::{parse_watch_file, Parse};
+// Only export traits - specific implementations are in their modules
+// Users access linebased types via debian_watch::linebased::WatchFile
+// Users access deb822 types via debian_watch::deb822::WatchFile
 
-#[cfg(feature = "deb822")]
+#[cfg(all(feature = "deb822", feature = "linebased"))]
 pub use crate::convert::{convert_to_v5, ConversionError};
-#[cfg(feature = "deb822")]
-pub use crate::deb822::{EntryV5, WatchFileV5};
 
-#[cfg(test)]
+#[cfg(all(test, feature = "linebased"))]
 mod tests {
+    use crate::linebased::WatchFile;
+
     #[test]
     fn test_create_watchfile() {
-        let wf = super::WatchFile::new(None);
+        let wf = WatchFile::new(None);
         assert_eq!(wf.version(), super::DEFAULT_VERSION);
 
         assert_eq!("", wf.to_string());
 
-        let wf = super::WatchFile::new(Some(4));
+        let wf = WatchFile::new(Some(4));
         assert_eq!(wf.version(), 4);
 
         assert_eq!("version=4\n", wf.to_string());
@@ -119,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_set_version() {
-        let mut wf = super::WatchFile::new(Some(4));
+        let mut wf = WatchFile::new(Some(4));
         assert_eq!(wf.version(), 4);
 
         wf.set_version(5);
@@ -127,7 +129,7 @@ mod tests {
         assert_eq!("version=5\n", wf.to_string());
 
         // Test setting version on a file without version
-        let mut wf = super::WatchFile::new(None);
+        let mut wf = WatchFile::new(None);
         assert_eq!(wf.version(), super::DEFAULT_VERSION);
 
         wf.set_version(4);
@@ -138,7 +140,7 @@ mod tests {
     #[test]
     fn test_set_version_on_parsed() {
         // Test that parsed WatchFiles can be mutated
-        let mut wf: super::WatchFile = "version=4\n".parse().unwrap();
+        let mut wf: WatchFile = "version=4\n".parse().unwrap();
         assert_eq!(wf.version(), 4);
 
         wf.set_version(5);
@@ -146,7 +148,7 @@ mod tests {
         assert_eq!("version=5\n", wf.to_string());
 
         // Test setting version on a parsed file without version
-        let mut wf: super::WatchFile = "".parse().unwrap();
+        let mut wf: WatchFile = "".parse().unwrap();
         assert_eq!(wf.version(), super::DEFAULT_VERSION);
 
         wf.set_version(4);

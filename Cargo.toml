@@ -9,7 +9,7 @@ repository = "https://github.com/jelmer/debian-watch-rs.git"
 homepage = "https://github.com/jelmer/debian-watch-rs"
 
 [features]
-default = ["linebased"]
+default = ["linebased", "deb822"]
 linebased = []
 discover = ["scraper", "reqwest"]
 blocking = ["reqwest?/blocking"]

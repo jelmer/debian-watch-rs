@@ -32,8 +32,10 @@ jobs:
       - name: Run tests with all features
         run: cargo test --all-features --verbose
         if: matrix.os != 'windows-latest'
-      - name: Run tests with no default features
-        run: cargo test --no-default-features --verbose
+      - name: Run tests with linebased feature only
+        run: cargo test --no-default-features --features linebased --verbose
+      - name: Run tests with deb822 feature only
+        run: cargo test --no-default-features --features deb822 --verbose
 
   minimal-versions:
     runs-on: ubuntu-latest

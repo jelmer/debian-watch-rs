@@ -294,26 +294,22 @@ pub fn parse(content: &str) -> Result<ParsedWatchFile, ParseError> {
     match version {
         #[cfg(feature = "linebased")]
         WatchFileVersion::LineBased(_v) => {
-            let wf: crate::linebased::WatchFile = content
-                .parse()
-                .map_err(ParseError::LineBased)?;
+            let wf: crate::linebased::WatchFile = content.parse().map_err(ParseError::LineBased)?;
             Ok(ParsedWatchFile::LineBased(wf))
         }
         #[cfg(not(feature = "linebased"))]
-        WatchFileVersion::LineBased(_v) => {
-            Err(ParseError::FeatureNotEnabled("linebased feature required for v1-4 formats".to_string()))
-        }
+        WatchFileVersion::LineBased(_v) => Err(ParseError::FeatureNotEnabled(
+            "linebased feature required for v1-4 formats".to_string(),
+        )),
         #[cfg(feature = "deb822")]
         WatchFileVersion::Deb822 => {
-            let wf: crate::deb822::WatchFile = content
-                .parse()
-                .map_err(ParseError::Deb822)?;
+            let wf: crate::deb822::WatchFile = content.parse().map_err(ParseError::Deb822)?;
             Ok(ParsedWatchFile::Deb822(wf))
         }
         #[cfg(not(feature = "deb822"))]
-        WatchFileVersion::Deb822 => {
-            Err(ParseError::FeatureNotEnabled("deb822 feature required for v5 format".to_string()))
-        }
+        WatchFileVersion::Deb822 => Err(ParseError::FeatureNotEnabled(
+            "deb822 feature required for v5 format".to_string(),
+        )),
     }
 }
 

@@ -298,6 +298,21 @@ impl Entry {
     pub fn script(&self) -> Option<String> {
         self.get_field("Script")
     }
+
+    /// Set the source URL
+    pub fn set_source(&mut self, url: &str) {
+        self.paragraph.set("Source", url);
+    }
+
+    /// Set the matching pattern
+    pub fn set_matching_pattern(&mut self, pattern: &str) {
+        self.paragraph.set("Matching-Pattern", pattern);
+    }
+
+    /// Get the line number (0-indexed) where this entry starts
+    pub fn line(&self) -> usize {
+        self.paragraph.line()
+    }
 }
 
 /// Normalize a field key according to RFC822 rules:
@@ -520,6 +535,57 @@ Matching-Pattern: .*\.tar\.gz
 
         let entries: Vec<_> = wf.entries().collect();
         assert_eq!(entries.len(), 1);
+    }
+
+    #[test]
+    fn test_set_source() {
+        let mut wf = WatchFile::new();
+        let mut entry = wf.add_entry("https://example.com/repo1", ".*\\.tar\\.gz");
+
+        assert_eq!(
+            entry.source(),
+            Some("https://example.com/repo1".to_string())
+        );
+
+        entry.set_source("https://example.com/repo2");
+        assert_eq!(
+            entry.source(),
+            Some("https://example.com/repo2".to_string())
+        );
+    }
+
+    #[test]
+    fn test_set_matching_pattern() {
+        let mut wf = WatchFile::new();
+        let mut entry = wf.add_entry("https://example.com/repo1", ".*\\.tar\\.gz");
+
+        assert_eq!(entry.matching_pattern(), Some(".*\\.tar\\.gz".to_string()));
+
+        entry.set_matching_pattern(".*/v?([\\d.]+)\\.tar\\.gz");
+        assert_eq!(
+            entry.matching_pattern(),
+            Some(".*/v?([\\d.]+)\\.tar\\.gz".to_string())
+        );
+    }
+
+    #[test]
+    fn test_entry_line() {
+        let input = r#"Version: 5
+
+Source: https://example.com/repo1
+Matching-Pattern: .*\.tar\.gz
+
+Source: https://example.com/repo2
+Matching-Pattern: .*\.tar\.xz
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+
+        // First entry starts at line 2 (0-indexed)
+        assert_eq!(entries[0].line(), 2);
+        // Second entry starts at line 5 (0-indexed)
+        assert_eq!(entries[1].line(), 5);
     }
 
     #[test]

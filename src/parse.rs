@@ -368,6 +368,82 @@ impl ParsedEntry {
             }
         }
     }
+
+    /// Set the URL/Source of the entry
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "linebased")]
+    /// # {
+    /// use debian_watch::parse::ParsedWatchFile;
+    ///
+    /// let mut wf = ParsedWatchFile::new(4).unwrap();
+    /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
+    /// entry.set_url("https://github.com/foo/bar/releases");
+    /// assert_eq!(entry.url(), "https://github.com/foo/bar/releases");
+    /// # }
+    /// ```
+    pub fn set_url(&mut self, url: &str) {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.set_url(url),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => e.set_source(url),
+        }
+    }
+
+    /// Set the matching pattern of the entry
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "linebased")]
+    /// # {
+    /// use debian_watch::parse::ParsedWatchFile;
+    ///
+    /// let mut wf = ParsedWatchFile::new(4).unwrap();
+    /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
+    /// entry.set_matching_pattern(".*/release-([\\d.]+)\\.tar\\.gz");
+    /// assert_eq!(entry.matching_pattern(), Some(".*/release-([\\d.]+)\\.tar\\.gz".to_string()));
+    /// # }
+    /// ```
+    pub fn set_matching_pattern(&mut self, pattern: &str) {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.set_matching_pattern(pattern),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => e.set_matching_pattern(pattern),
+        }
+    }
+
+    /// Get the line number (0-indexed) where this entry starts
+    ///
+    /// For line-based formats (v1-4), this returns the actual line number in the file.
+    /// For deb822 format (v5), this returns the line where the paragraph starts.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "linebased")]
+    /// # {
+    /// use debian_watch::parse::parse;
+    ///
+    /// let content = "version=4\nhttps://example.com/ .*.tar.gz\nhttps://example2.com/ .*.tar.gz";
+    /// let wf = parse(content).unwrap();
+    /// let entries: Vec<_> = wf.entries().collect();
+    /// assert_eq!(entries[0].line(), 1); // Second line (0-indexed)
+    /// assert_eq!(entries[1].line(), 2); // Third line (0-indexed)
+    /// # }
+    /// ```
+    pub fn line(&self) -> usize {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.line(),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => e.line(),
+        }
+    }
 }
 
 impl std::fmt::Display for ParsedWatchFile {
@@ -611,5 +687,94 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url(), "https://github.com/owner/repo/tags");
         assert_eq!(entries[0].get_option("Compression"), Some("xz".to_string()));
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_parsed_entry_set_url_v4() {
+        let mut wf = ParsedWatchFile::new(4).unwrap();
+        let mut entry = wf.add_entry("https://github.com/foo/bar/tags", r".*/v?([\d.]+)\.tar\.gz");
+
+        assert_eq!(entry.url(), "https://github.com/foo/bar/tags");
+
+        entry.set_url("https://github.com/foo/bar/releases");
+        assert_eq!(entry.url(), "https://github.com/foo/bar/releases");
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_parsed_entry_set_url_v5() {
+        let mut wf = ParsedWatchFile::new(5).unwrap();
+        let mut entry = wf.add_entry("https://github.com/foo/bar/tags", r".*/v?([\d.]+)\.tar\.gz");
+
+        assert_eq!(entry.url(), "https://github.com/foo/bar/tags");
+
+        entry.set_url("https://github.com/foo/bar/releases");
+        assert_eq!(entry.url(), "https://github.com/foo/bar/releases");
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_parsed_entry_set_matching_pattern_v4() {
+        let mut wf = ParsedWatchFile::new(4).unwrap();
+        let mut entry = wf.add_entry("https://github.com/foo/bar/tags", r".*/v?([\d.]+)\.tar\.gz");
+
+        assert_eq!(
+            entry.matching_pattern(),
+            Some(r".*/v?([\d.]+)\.tar\.gz".to_string())
+        );
+
+        entry.set_matching_pattern(r".*/release-([\d.]+)\.tar\.gz");
+        assert_eq!(
+            entry.matching_pattern(),
+            Some(r".*/release-([\d.]+)\.tar\.gz".to_string())
+        );
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_parsed_entry_set_matching_pattern_v5() {
+        let mut wf = ParsedWatchFile::new(5).unwrap();
+        let mut entry = wf.add_entry("https://github.com/foo/bar/tags", r".*/v?([\d.]+)\.tar\.gz");
+
+        assert_eq!(
+            entry.matching_pattern(),
+            Some(r".*/v?([\d.]+)\.tar\.gz".to_string())
+        );
+
+        entry.set_matching_pattern(r".*/release-([\d.]+)\.tar\.gz");
+        assert_eq!(
+            entry.matching_pattern(),
+            Some(r".*/release-([\d.]+)\.tar\.gz".to_string())
+        );
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_parsed_entry_line_v4() {
+        let content = "version=4\nhttps://example.com/ .*.tar.gz\nhttps://example2.com/ .*.tar.gz";
+        let wf = parse(content).unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+
+        assert_eq!(entries[0].line(), 1); // Second line (0-indexed)
+        assert_eq!(entries[1].line(), 2); // Third line (0-indexed)
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_parsed_entry_line_v5() {
+        let content = r#"Version: 5
+
+Source: https://example.com/repo1
+Matching-Pattern: .*\.tar\.gz
+
+Source: https://example.com/repo2
+Matching-Pattern: .*\.tar\.xz
+"#;
+        let wf = parse(content).unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+
+        assert_eq!(entries[0].line(), 2); // Third line (0-indexed)
+        assert_eq!(entries[1].line(), 5); // Sixth line (0-indexed)
     }
 }

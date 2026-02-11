@@ -446,18 +446,20 @@ mod tests {
     #[test]
     fn test_discover_blocking_with_no_matching_pattern() {
         use crate::parse::parse;
-        use std::io::Write;
-        use std::net::TcpListener;
         use std::thread;
 
-        // Start a simple HTTP server on a random port
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
+        // Start a tiny_http server on a random port
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr();
 
         let server_thread = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><a href=\"mypackage-1.2.3.tar.gz\">Download</a></body></html>";
-            stream.write_all(response).unwrap();
+            let request = server.recv().unwrap();
+            let response = tiny_http::Response::from_string(
+                "<html><body><a href=\"mypackage-1.2.3.tar.gz\">Download</a></body></html>"
+            ).with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap()
+            );
+            request.respond(response).unwrap();
         });
 
         // Create a watch file with no matching pattern

@@ -32,6 +32,7 @@ anyhow = { version = "1.0", optional = true }
 [dev-dependencies]
 maplit = "1.0.2"
 tokio = { version = "1", features = ["macros", "rt"] }
+tiny_http = "0.12"
 
 [[bin]]
 name = "convert-watch-v5"

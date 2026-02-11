@@ -8,6 +8,10 @@ use crate::release::Release;
 use crate::DEFAULT_USER_AGENT;
 use std::error::Error;
 
+/// Default matching pattern used when none is specified
+/// Expands to: (?:package-name)?[-_]?(\d[\-+\.:\~\da-zA-Z]*)(?i)\.(?:tar\.xz|tar\.bz2|tar\.gz|zip|tgz|tbz|txz)
+const DEFAULT_MATCHING_PATTERN: &str = "(?:@PACKAGE@)?@ANY_VERSION@@ARCHIVE_EXT@";
+
 /// Error type for discovery operations
 #[derive(Debug)]
 pub enum DiscoveryError {
@@ -154,10 +158,10 @@ impl ParsedEntry {
             body.to_vec()
         };
 
-        // Get the matching pattern
+        // Get the matching pattern, using default if not specified
         let pattern_str = self
             .matching_pattern()
-            .ok_or_else(|| DiscoveryError::MissingField("matching_pattern".to_string()))?;
+            .unwrap_or_else(|| DEFAULT_MATCHING_PATTERN.to_string());
 
         // Apply substitution to the matching pattern
         let package_name = String::new();
@@ -287,10 +291,10 @@ impl ParsedEntry {
             body.to_vec()
         };
 
-        // Get the matching pattern
+        // Get the matching pattern, using default if not specified
         let matching_pattern = self
             .matching_pattern()
-            .ok_or_else(|| DiscoveryError::MissingField("matching_pattern".to_string()))?;
+            .unwrap_or_else(|| DEFAULT_MATCHING_PATTERN.to_string());
 
         // Apply substitution to the matching pattern
         let package_name = String::new();
@@ -427,5 +431,86 @@ mod tests {
         let err =
             DiscoveryError::PatternError(MangleError::RegexError("invalid regex".to_string()));
         assert_eq!(err.to_string(), "Pattern error: regex error: invalid regex");
+    }
+
+    #[test]
+    fn test_default_matching_pattern_value() {
+        // Verify the default pattern constant matches uscan's default
+        assert_eq!(
+            DEFAULT_MATCHING_PATTERN,
+            "(?:@PACKAGE@)?@ANY_VERSION@@ARCHIVE_EXT@"
+        );
+    }
+
+    #[cfg(feature = "blocking")]
+    #[test]
+    fn test_discover_blocking_with_no_matching_pattern() {
+        use crate::parse::parse;
+        use std::io::Write;
+        use std::net::TcpListener;
+        use std::thread;
+
+        // Start a simple HTTP server on a random port
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server_thread = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let response = b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html><body><a href=\"mypackage-1.2.3.tar.gz\">Download</a></body></html>";
+            stream.write_all(response).unwrap();
+        });
+
+        // Create a watch file with no matching pattern
+        let watch_content = format!(
+            r#"version=4
+http://{}
+"#,
+            addr
+        );
+
+        let parsed = parse(&watch_content).unwrap();
+        let entries: Vec<_> = parsed.entries().collect();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+
+        // Verify matching_pattern is None
+        assert_eq!(entry.matching_pattern(), None);
+
+        // Call discover_blocking - should use default pattern and find the release
+        let result = entry.discover_blocking(|| "mypackage".to_string());
+
+        server_thread.join().unwrap();
+
+        // Should successfully find the release using default pattern
+        let releases = result.expect("discover should succeed with default pattern");
+        assert_eq!(releases.len(), 1);
+        assert_eq!(releases[0].version, "1.2.3");
+    }
+
+    #[test]
+    fn test_explicit_pattern_still_works() {
+        // Ensure that when a pattern IS specified, it's still used (not overridden by default)
+        use crate::parse::parse;
+
+        let watch_content = r#"version=4
+https://example.com/releases/ custom-pattern-(\d+)\.zip
+"#;
+        let parsed = parse(watch_content).unwrap();
+        let entries: Vec<_> = parsed.entries().collect();
+        assert_eq!(entries.len(), 1);
+        let entry = &entries[0];
+
+        // Verify the explicit pattern is present
+        assert_eq!(
+            entry.matching_pattern(),
+            Some("custom-pattern-(\\d+)\\.zip".to_string())
+        );
+
+        // Verify the logic would use the explicit pattern, not the default
+        let pattern_str = entry
+            .matching_pattern()
+            .unwrap_or_else(|| DEFAULT_MATCHING_PATTERN.to_string());
+
+        assert_eq!(pattern_str, "custom-pattern-(\\d+)\\.zip");
     }
 }

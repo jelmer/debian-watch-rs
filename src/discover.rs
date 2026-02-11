@@ -455,9 +455,10 @@ mod tests {
         let server_thread = thread::spawn(move || {
             let request = server.recv().unwrap();
             let response = tiny_http::Response::from_string(
-                "<html><body><a href=\"mypackage-1.2.3.tar.gz\">Download</a></body></html>"
-            ).with_header(
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap()
+                "<html><body><a href=\"mypackage-1.2.3.tar.gz\">Download</a></body></html>",
+            )
+            .with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap(),
             );
             request.respond(response).unwrap();
         });

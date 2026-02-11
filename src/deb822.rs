@@ -352,6 +352,15 @@ impl Entry {
     pub fn line(&self) -> usize {
         self.paragraph.line()
     }
+
+    /// Retrieve the mode of the watch file entry with detailed error information.
+    pub fn mode(&self) -> Result<crate::types::Mode, TypesParseError> {
+        Ok(self
+            .get_field("Mode")
+            .map(|s| s.parse())
+            .transpose()?
+            .unwrap_or_default())
+    }
 }
 
 /// Normalize a field key according to RFC822 rules:

@@ -479,6 +479,39 @@ impl ParsedEntry {
             ParsedEntry::Deb822(e) => e.delete_option(option),
         }
     }
+
+    /// Retrieve the mode of the watch file entry.
+    ///
+    /// Returns the mode with default fallback to `Mode::LWP` if not specified.
+    /// Returns an error if the mode value is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # #[cfg(feature = "linebased")]
+    /// # {
+    /// use debian_watch::parse::ParsedWatchFile;
+    /// use debian_watch::{WatchOption, Mode};
+    ///
+    /// let mut wf = ParsedWatchFile::new(4).unwrap();
+    /// let mut entry = wf.add_entry("https://github.com/foo/bar/tags", ".*/v?([\\d.]+)\\.tar\\.gz");
+    ///
+    /// // Default mode is LWP
+    /// assert_eq!(entry.mode().unwrap(), Mode::LWP);
+    ///
+    /// // Set git mode
+    /// entry.set_option(WatchOption::Mode(Mode::Git));
+    /// assert_eq!(entry.mode().unwrap(), Mode::Git);
+    /// # }
+    /// ```
+    pub fn mode(&self) -> Result<crate::types::Mode, crate::types::ParseError> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.try_mode(),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => e.mode(),
+        }
+    }
 }
 
 impl std::fmt::Display for ParsedWatchFile {

@@ -37,7 +37,7 @@ pub mod linebased;
 mod convert;
 #[cfg(feature = "deb822")]
 pub mod deb822;
-#[cfg(feature = "discover")]
+#[cfg(all(feature = "discover", any(feature = "linebased", feature = "deb822")))]
 pub mod discover;
 pub mod mangle;
 #[cfg(feature = "pgp")]
@@ -49,6 +49,7 @@ pub mod search;
 /// version 1.
 pub const DEFAULT_VERSION: u32 = 1;
 
+#[cfg(any(feature = "linebased", feature = "deb822"))]
 pub mod parse;
 mod subst;
 mod types;

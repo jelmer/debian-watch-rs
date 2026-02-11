@@ -1,4 +1,7 @@
+#![cfg(any(feature = "linebased", feature = "deb822"))]
 //! Format detection and parsing for watch files
+//!
+//! This module is only available when at least one of the `linebased` or `deb822` features is enabled.
 
 /// Error type for parsing watch files
 #[derive(Debug)]

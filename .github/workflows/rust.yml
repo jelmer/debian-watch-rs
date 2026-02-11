@@ -27,6 +27,8 @@ jobs:
         if: matrix.os == 'macos-latest'
       - name: Build
         run: cargo build --verbose
+      - name: Build with no default features
+        run: cargo build --no-default-features --verbose
       - name: Run tests
         run: cargo test --verbose
       - name: Run tests with all features

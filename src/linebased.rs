@@ -236,12 +236,16 @@ fn parse(text: &str) -> InternalParse {
         }
 
         fn parse_watch_entry(&mut self) -> bool {
-            self.skip_ws();
-            if self.current().is_none() {
-                return false;
+            // Skip whitespace, comments, and blank lines between entries
+            loop {
+                self.skip_ws();
+                if self.current() == Some(NEWLINE) {
+                    self.bump();
+                } else {
+                    break;
+                }
             }
-            if self.current() == Some(NEWLINE) {
-                self.bump();
+            if self.current().is_none() {
                 return false;
             }
             self.builder.start_node(ENTRY.into());
@@ -429,6 +433,17 @@ fn parse(text: &str) -> InternalParse {
             }
             // Don't forget to eat *trailing* whitespace
             self.skip_ws();
+            // Consume any remaining tokens that were not parsed, recording an error.
+            // This ensures the CST always covers the full input.
+            if self.current().is_some() {
+                self.builder.start_node(ERROR.into());
+                self.errors
+                    .push("unexpected tokens after last entry".to_string());
+                while self.current().is_some() {
+                    self.bump();
+                }
+                self.builder.finish_node();
+            }
             // Close the root node.
             self.builder.finish_node();
 
@@ -3483,5 +3498,105 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
         assert_eq!(entry.url(), "https://example.com/releases");
         assert_eq!(entry.matching_pattern().as_deref(), Some("(?:.*?/)?v?(\\d"));
         assert_eq!(entry.get_option("compression"), Some("xz".to_string()));
+    }
+
+    #[test]
+    fn test_parse_entry_with_comment_before() {
+        // Regression test for https://bugs.debian.org/1128319:
+        // A comment line before an entry with a continuation line was not parsed correctly
+        // - the entry was silently dropped.
+        let input = concat!(
+            "version=4\n",
+            "# try also https://pypi.debian.net/tomoscan/watch\n",
+            "opts=uversionmangle=s/(rc|a|b|c)/~$1/;s/\\.dev/~dev/ \\\n",
+            "https://pypi.debian.net/tomoscan/tomoscan-(.+)\\.(?:zip|tgz|tbz|txz|(?:tar\\.(?:gz|bz2|xz)))\n"
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        // The CST must cover the full input (round-trip invariant)
+        assert_eq!(wf.to_string(), input);
+        assert_eq!(wf.entries().count(), 1);
+        let entry = wf.entries().next().unwrap();
+        assert_eq!(
+            entry.url(),
+            "https://pypi.debian.net/tomoscan/tomoscan-(.+)\\.(?:zip|tgz|tbz|txz|(?:tar\\.(?:gz|bz2|xz)))"
+        );
+        assert_eq!(
+            entry.get_option("uversionmangle"),
+            Some("s/(rc|a|b|c)/~$1/;s/\\.dev/~dev/".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_multiple_comments_before_entry() {
+        // Multiple consecutive comment lines before an entry should all be preserved
+        // and the entry should still be parsed correctly.
+        let input = concat!(
+            "version=4\n",
+            "# first comment\n",
+            "# second comment\n",
+            "# third comment\n",
+            "https://example.com/foo foo-(.*).tar.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        assert_eq!(wf.to_string(), input);
+        assert_eq!(wf.entries().count(), 1);
+        assert_eq!(wf.entries().next().unwrap().url(), "https://example.com/foo");
+    }
+
+    #[test]
+    fn test_parse_blank_lines_between_entries() {
+        // Blank lines between entries should be preserved and all entries parsed.
+        let input = concat!(
+            "version=4\n",
+            "https://example.com/foo .*/foo-(\\d+)\\.tar\\.gz\n",
+            "\n",
+            "https://example.com/bar .*/bar-(\\d+)\\.tar\\.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        assert_eq!(wf.to_string(), input);
+        assert_eq!(wf.entries().count(), 2);
+    }
+
+    #[test]
+    fn test_parse_trailing_unparseable_tokens_produce_error() {
+        // Any tokens that remain after all entries are parsed should be captured
+        // in an ERROR node so the CST covers the full input, and an error is reported.
+        let input = "version=4\nhttps://example.com/foo foo-(.*).tar.gz\n=garbage\n";
+        let result = input.parse::<super::WatchFile>();
+        assert!(result.is_err(), "expected parse error for trailing garbage");
+        // Verify the round-trip via from_str_relaxed: the CST must cover all input.
+        let wf = super::WatchFile::from_str_relaxed(input);
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_parse_roundtrip_full_file() {
+        // The CST must always cover the full input, so to_string() == original input.
+        let inputs = [
+            "version=4\nhttps://example.com/foo foo-(.*).tar.gz\n",
+            "version=4\n# a comment\nhttps://example.com/foo foo-(.*).tar.gz\n",
+            concat!(
+                "version=4\n",
+                "opts=uversionmangle=s/rc/~rc/ \\\n",
+                "  https://example.com/foo foo-(.*).tar.gz\n",
+            ),
+            concat!(
+                "version=4\n",
+                "# comment before entry\n",
+                "opts=uversionmangle=s/rc/~rc/ \\\n",
+                "https://example.com/foo foo-(.*).tar.gz\n",
+                "# comment between entries\n",
+                "https://example.com/bar bar-(.*).tar.gz\n",
+            ),
+        ];
+        for input in &inputs {
+            let wf: super::WatchFile = input.parse().unwrap();
+            assert_eq!(
+                wf.to_string(),
+                *input,
+                "round-trip failed for input: {:?}",
+                input
+            );
+        }
     }
 }

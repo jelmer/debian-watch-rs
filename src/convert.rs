@@ -408,4 +408,33 @@ Debian-Version-Mangle: s/\\+dfsg//
 ";
         assert_eq!(output, expected);
     }
+
+    #[test]
+    fn test_conversion_with_comment_before_entry() {
+        // Regression test for https://bugs.debian.org/1128319:
+        // A comment line before an entry with a continuation line was not converted correctly
+        // - the entry was silently dropped and only "Version: 5" was produced.
+        let v4_input = concat!(
+            "version=4\n",
+            "# try also https://pypi.debian.net/tomoscan/watch\n",
+            "opts=uversionmangle=s/(rc|a|b|c)/~$1/;s/\\.dev/~dev/ \\\n",
+            "https://pypi.debian.net/tomoscan/tomoscan-(.+)\\.(?:zip|tgz|tbz|txz|(?:tar\\.(?:gz|bz2|xz)))\n"
+        );
+
+        let v4_file: WatchFile = v4_input.parse().unwrap();
+        let v5_file = convert_to_v5(&v4_file).unwrap();
+
+        assert_eq!(v5_file.version(), 5);
+
+        let entries: Vec<_> = v5_file.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url(),
+            "https://pypi.debian.net/tomoscan/tomoscan-(.+)\\.(?:zip|tgz|tbz|txz|(?:tar\\.(?:gz|bz2|xz)))"
+        );
+        assert_eq!(
+            entries[0].get_option("Upstream-Version-Mangle"),
+            Some("s/(rc|a|b|c)/~$1/;s/\\.dev/~dev/".to_string())
+        );
+    }
 }

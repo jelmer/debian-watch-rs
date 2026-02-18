@@ -33,7 +33,7 @@ pub(crate) fn lex(text: &str) -> Vec<(SyntaxKind, String)> {
             (tok(EQUALS), r"="),
             (tok(COMMA), r","),
             (tok(NEWLINE), r"\n"),
-            (tok(WHITESPACE), r"\s+"),
+            (tok(WHITESPACE), r"[ \t\r]+"),
             (tok(COMMENT), r"#[^\n]*"),
         ])
         .build();

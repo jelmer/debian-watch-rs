@@ -51,7 +51,7 @@ pub const DEFAULT_VERSION: u32 = 1;
 
 #[cfg(any(feature = "linebased", feature = "deb822"))]
 pub mod parse;
-mod subst;
+pub mod subst;
 mod types;
 /// Default user agent string used for HTTP requests
 pub const DEFAULT_USER_AGENT: &str = concat!("debian-watch-rs/", env!("CARGO_PKG_VERSION"));

@@ -44,6 +44,8 @@ pub mod mangle;
 pub mod pgp;
 pub mod release;
 pub mod search;
+#[cfg(feature = "deb822")]
+pub mod templates;
 
 /// Any watch files without a version are assumed to be
 /// version 1.

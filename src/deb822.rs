@@ -98,8 +98,13 @@ impl WatchFile {
         // The second paragraph (if it exists and has specific fields) contains defaults
         // Otherwise all paragraphs are entries
         let start_index = if paragraphs.len() > 1 {
-            // Check if second paragraph looks like defaults (no Source field)
-            if !paragraphs[1].contains_key("Source") && !paragraphs[1].contains_key("source") {
+            // Check if second paragraph looks like defaults (no Source or Template field)
+            let has_source =
+                paragraphs[1].contains_key("Source") || paragraphs[1].contains_key("source");
+            let has_template =
+                paragraphs[1].contains_key("Template") || paragraphs[1].contains_key("template");
+
+            if !has_source && !has_template {
                 2 // Skip version and defaults
             } else {
                 1 // Skip only version
@@ -233,14 +238,42 @@ impl Entry {
         None
     }
 
-    /// Returns the source URL
-    pub fn source(&self) -> Option<String> {
-        self.get_field("Source")
+    /// Returns the source URL, expanding templates if present
+    ///
+    /// Returns `Ok(None)` if no Source field is set and no template is present.
+    /// Returns `Err` if template expansion fails.
+    pub fn source(&self) -> Result<Option<String>, crate::templates::TemplateError> {
+        // First check if explicitly set
+        if let Some(source) = self.get_field("Source") {
+            return Ok(Some(source));
+        }
+
+        // If not set, check if there's a template to expand
+        if self.get_field("Template").is_none() {
+            return Ok(None);
+        }
+
+        // Template exists, expand it (propagate any errors)
+        self.expand_template().map(|t| t.source)
     }
 
-    /// Returns the matching pattern
-    pub fn matching_pattern(&self) -> Option<String> {
-        self.get_field("Matching-Pattern")
+    /// Returns the matching pattern, expanding templates if present
+    ///
+    /// Returns `Ok(None)` if no Matching-Pattern field is set and no template is present.
+    /// Returns `Err` if template expansion fails.
+    pub fn matching_pattern(&self) -> Result<Option<String>, crate::templates::TemplateError> {
+        // First check if explicitly set
+        if let Some(pattern) = self.get_field("Matching-Pattern") {
+            return Ok(Some(pattern));
+        }
+
+        // If not set, check if there's a template to expand
+        if self.get_field("Template").is_none() {
+            return Ok(None);
+        }
+
+        // Template exists, expand it (propagate any errors)
+        self.expand_template().map(|t| t.matching_pattern)
     }
 
     /// Get the underlying paragraph
@@ -322,7 +355,7 @@ impl Entry {
 
     /// Get the URL (same as source() but named url() for consistency)
     pub fn url(&self) -> String {
-        self.source().unwrap_or_default()
+        self.source().unwrap_or(None).unwrap_or_default()
     }
 
     /// Get the version policy
@@ -360,6 +393,107 @@ impl Entry {
             .map(|s| s.parse())
             .transpose()?
             .unwrap_or_default())
+    }
+
+    /// Expand template if present
+    fn expand_template(
+        &self,
+    ) -> Result<crate::templates::ExpandedTemplate, crate::templates::TemplateError> {
+        use crate::templates::{expand_template, parse_github_url, Template, TemplateError};
+
+        // Check if there's a Template field
+        let template_str =
+            self.get_field("Template")
+                .ok_or_else(|| TemplateError::MissingField {
+                    template: "any".to_string(),
+                    field: "Template".to_string(),
+                })?;
+
+        let release_only = self
+            .get_field("Release-Only")
+            .map(|v| v.to_lowercase() == "yes")
+            .unwrap_or(false);
+
+        let version_type = self.get_field("Version-Type");
+
+        // Build the appropriate Template enum variant
+        let template = match template_str.to_lowercase().as_str() {
+            "github" => {
+                // GitHub requires either Dist or Owner+Project
+                let (owner, repository) = if let (Some(o), Some(p)) =
+                    (self.get_field("Owner"), self.get_field("Project"))
+                {
+                    (o, p)
+                } else if let Some(dist) = self.get_field("Dist") {
+                    parse_github_url(&dist)?
+                } else {
+                    return Err(TemplateError::MissingField {
+                        template: "GitHub".to_string(),
+                        field: "Dist or Owner+Project".to_string(),
+                    });
+                };
+
+                Template::GitHub {
+                    owner,
+                    repository,
+                    release_only,
+                    version_type,
+                }
+            }
+            "gitlab" => {
+                let dist = self
+                    .get_field("Dist")
+                    .ok_or_else(|| TemplateError::MissingField {
+                        template: "GitLab".to_string(),
+                        field: "Dist".to_string(),
+                    })?;
+
+                Template::GitLab {
+                    dist,
+                    release_only,
+                    version_type,
+                }
+            }
+            "pypi" => {
+                let package =
+                    self.get_field("Dist")
+                        .ok_or_else(|| TemplateError::MissingField {
+                            template: "PyPI".to_string(),
+                            field: "Dist".to_string(),
+                        })?;
+
+                Template::PyPI {
+                    package,
+                    version_type,
+                }
+            }
+            "npmregistry" => {
+                let package =
+                    self.get_field("Dist")
+                        .ok_or_else(|| TemplateError::MissingField {
+                            template: "Npmregistry".to_string(),
+                            field: "Dist".to_string(),
+                        })?;
+
+                Template::Npmregistry {
+                    package,
+                    version_type,
+                }
+            }
+            "metacpan" => {
+                let dist = self
+                    .get_field("Dist")
+                    .ok_or_else(|| TemplateError::MissingField {
+                        template: "Metacpan".to_string(),
+                        field: "Dist".to_string(),
+                    })?;
+
+                Template::Metacpan { dist, version_type }
+            }
+            _ => return Err(TemplateError::UnknownTemplate(template_str)),
+        };
+
+        Ok(expand_template(template))
     }
 }
 
@@ -400,11 +534,11 @@ Matching-Pattern: .*/v?(\d\S+)\.tar\.gz
 
         let entry = &entries[0];
         assert_eq!(
-            entry.source().as_deref(),
+            entry.source().unwrap().as_deref(),
             Some("https://github.com/owner/repo/tags")
         );
         assert_eq!(
-            entry.matching_pattern(),
+            entry.matching_pattern().unwrap(),
             Some(".*/v?(\\d\\S+)\\.tar\\.gz".to_string())
         );
     }
@@ -425,11 +559,11 @@ Matching-Pattern: .*/release-(\d\S+)\.tar\.gz
         assert_eq!(entries.len(), 2);
 
         assert_eq!(
-            entries[0].source().as_deref(),
+            entries[0].source().unwrap().as_deref(),
             Some("https://github.com/owner/repo1/tags")
         );
         assert_eq!(
-            entries[1].source().as_deref(),
+            entries[1].source().unwrap().as_deref(),
             Some("https://github.com/owner/repo2/tags")
         );
     }
@@ -447,8 +581,14 @@ matching-pattern: .*\.tar\.gz
         assert_eq!(entries.len(), 1);
 
         let entry = &entries[0];
-        assert_eq!(entry.source().as_deref(), Some("https://example.com/files"));
-        assert_eq!(entry.matching_pattern().as_deref(), Some(".*\\.tar\\.gz"));
+        assert_eq!(
+            entry.source().unwrap().as_deref(),
+            Some("https://example.com/files")
+        );
+        assert_eq!(
+            entry.matching_pattern().unwrap().as_deref(),
+            Some(".*\\.tar\\.gz")
+        );
     }
 
     #[test]
@@ -591,13 +731,13 @@ Matching-Pattern: .*\.tar\.gz
         let mut entry = wf.add_entry("https://example.com/repo1", ".*\\.tar\\.gz");
 
         assert_eq!(
-            entry.source(),
+            entry.source().unwrap(),
             Some("https://example.com/repo1".to_string())
         );
 
         entry.set_source("https://example.com/repo2");
         assert_eq!(
-            entry.source(),
+            entry.source().unwrap(),
             Some("https://example.com/repo2".to_string())
         );
     }
@@ -607,11 +747,14 @@ Matching-Pattern: .*\.tar\.gz
         let mut wf = WatchFile::new();
         let mut entry = wf.add_entry("https://example.com/repo1", ".*\\.tar\\.gz");
 
-        assert_eq!(entry.matching_pattern(), Some(".*\\.tar\\.gz".to_string()));
+        assert_eq!(
+            entry.matching_pattern().unwrap(),
+            Some(".*\\.tar\\.gz".to_string())
+        );
 
         entry.set_matching_pattern(".*/v?([\\d.]+)\\.tar\\.gz");
         assert_eq!(
-            entry.matching_pattern(),
+            entry.matching_pattern().unwrap(),
             Some(".*/v?([\\d.]+)\\.tar\\.gz".to_string())
         );
     }
@@ -828,8 +971,122 @@ Matching-Pattern: .*\.tar\.gz
         let entry = &entries[0];
         // Test url() method
         assert_eq!(
-            entry.source().as_deref(),
+            entry.source().unwrap().as_deref(),
             Some("https://example.com/files/@PACKAGE@")
+        );
+    }
+
+    #[test]
+    fn test_github_template() {
+        let input = r#"Version: 5
+
+Template: GitHub
+Owner: torvalds
+Project: linux
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.source().unwrap(),
+            Some("https://github.com/torvalds/linux/tags".to_string())
+        );
+        assert_eq!(
+            entry.matching_pattern().unwrap(),
+            Some(r".*/(?:refs/tags/)?v?@ANY_VERSION@@ARCHIVE_EXT@".to_string())
+        );
+    }
+
+    #[test]
+    fn test_github_template_with_dist() {
+        let input = r#"Version: 5
+
+Template: GitHub
+Dist: https://github.com/guimard/llng-docker
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.source().unwrap(),
+            Some("https://github.com/guimard/llng-docker/tags".to_string())
+        );
+    }
+
+    #[test]
+    fn test_pypi_template() {
+        let input = r#"Version: 5
+
+Template: PyPI
+Dist: bitbox02
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.source().unwrap(),
+            Some("https://pypi.debian.net/bitbox02/".to_string())
+        );
+        assert_eq!(
+            entry.matching_pattern().unwrap(),
+            Some(
+                r"https://pypi\.debian\.net/bitbox02/[^/]+\.tar\.gz#/.*-@ANY_VERSION@\.tar\.gz"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_gitlab_template() {
+        let input = r#"Version: 5
+
+Template: GitLab
+Dist: https://salsa.debian.org/debian/devscripts
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.source().unwrap(),
+            Some("https://salsa.debian.org/debian/devscripts".to_string())
+        );
+        assert_eq!(
+            entry.matching_pattern().unwrap(),
+            Some(r".*/v?@ANY_VERSION@@ARCHIVE_EXT@".to_string())
+        );
+    }
+
+    #[test]
+    fn test_template_with_explicit_source() {
+        // Explicit Source should override template expansion
+        let input = r#"Version: 5
+
+Template: GitHub
+Owner: test
+Project: project
+Source: https://custom.example.com/
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+
+        let entry = &entries[0];
+        assert_eq!(
+            entry.source().unwrap(),
+            Some("https://custom.example.com/".to_string())
         );
     }
 }

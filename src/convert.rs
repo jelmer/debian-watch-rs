@@ -236,7 +236,7 @@ https://example.com/files .*/v?(\d+\.\d+)\.tar\.gz
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].url(), "https://example.com/files");
         assert_eq!(
-            entries[0].matching_pattern(),
+            entries[0].matching_pattern().unwrap(),
             Some(".*/v?(\\d+\\.\\d+)\\.tar\\.gz".to_string())
         );
     }

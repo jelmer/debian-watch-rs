@@ -240,7 +240,7 @@ impl ParsedEntry {
             #[cfg(feature = "linebased")]
             ParsedEntry::LineBased(e) => e.url(),
             #[cfg(feature = "deb822")]
-            ParsedEntry::Deb822(e) => e.source().unwrap_or_default(),
+            ParsedEntry::Deb822(e) => e.source().unwrap_or(None).unwrap_or_default(),
         }
     }
 
@@ -250,7 +250,7 @@ impl ParsedEntry {
             #[cfg(feature = "linebased")]
             ParsedEntry::LineBased(e) => e.matching_pattern(),
             #[cfg(feature = "deb822")]
-            ParsedEntry::Deb822(e) => e.matching_pattern(),
+            ParsedEntry::Deb822(e) => e.matching_pattern().unwrap_or(None),
         }
     }
 

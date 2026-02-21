@@ -147,7 +147,7 @@ fn expand_github_template(
 ) -> ExpandedTemplate {
     let version_pattern = version_type
         .as_deref()
-        .map(|v| format!("@{}@", v))
+        .map(|v| format!("@{}_VERSION@", v.to_uppercase()))
         .unwrap_or_else(|| "@ANY_VERSION@".to_string());
 
     let source = if release_only {
@@ -177,7 +177,7 @@ fn expand_gitlab_template(
 ) -> ExpandedTemplate {
     let version_pattern = version_type
         .as_deref()
-        .map(|v| format!("@{}@", v))
+        .map(|v| format!("@{}_VERSION@", v.to_uppercase()))
         .unwrap_or_else(|| "@ANY_VERSION@".to_string());
 
     // GitLab uses mode=gitlab
@@ -193,7 +193,7 @@ fn expand_gitlab_template(
 fn expand_pypi_template(package: String, version_type: Option<String>) -> ExpandedTemplate {
     let version_pattern = version_type
         .as_deref()
-        .map(|v| format!("@{}@", v))
+        .map(|v| format!("@{}_VERSION@", v.to_uppercase()))
         .unwrap_or_else(|| "@ANY_VERSION@".to_string());
 
     ExpandedTemplate {
@@ -211,7 +211,7 @@ fn expand_pypi_template(package: String, version_type: Option<String>) -> Expand
 fn expand_npmregistry_template(package: String, version_type: Option<String>) -> ExpandedTemplate {
     let version_pattern = version_type
         .as_deref()
-        .map(|v| format!("@{}@", v))
+        .map(|v| format!("@{}_VERSION@", v.to_uppercase()))
         .unwrap_or_else(|| "@ANY_VERSION@".to_string());
 
     // npm package names might have @ prefix for scoped packages
@@ -233,7 +233,7 @@ fn expand_npmregistry_template(package: String, version_type: Option<String>) ->
 fn expand_metacpan_template(dist: String, version_type: Option<String>) -> ExpandedTemplate {
     let version_pattern = version_type
         .as_deref()
-        .map(|v| format!("@{}@", v))
+        .map(|v| format!("@{}_VERSION@", v.to_uppercase()))
         .unwrap_or_else(|| "@ANY_VERSION@".to_string());
 
     // MetaCPAN dist names can use :: or -
@@ -831,5 +831,262 @@ mod tests {
             Some("stable".to_string())
         );
         assert_eq!(extract_version_type("no-template-here"), None);
+    }
+
+    #[test]
+    fn test_detect_github_wrong_searchmode() {
+        // GitHub template requires searchmode=html or None
+        let template = detect_template(
+            Some("https://github.com/torvalds/linux/tags"),
+            Some(r".*/(?:refs/tags/)?v?@ANY_VERSION@@ARCHIVE_EXT@"),
+            Some("plain"), // Wrong searchmode
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_github_invalid_url() {
+        // URL doesn't end with /tags or /releases
+        let template = detect_template(
+            Some("https://github.com/torvalds/linux"),
+            Some(r".*/(?:refs/tags/)?v?@ANY_VERSION@@ARCHIVE_EXT@"),
+            Some("html"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_github_wrong_host() {
+        // Not github.com
+        let template = detect_template(
+            Some("https://gitlab.com/foo/bar/tags"),
+            Some(r".*/(?:refs/tags/)?v?@ANY_VERSION@@ARCHIVE_EXT@"),
+            Some("html"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_gitlab_without_mode() {
+        // GitLab template requires mode=gitlab
+        let template = detect_template(
+            Some("https://salsa.debian.org/debian/devscripts"),
+            Some(r".*/v?@ANY_VERSION@@ARCHIVE_EXT@"),
+            None,
+            None, // Missing mode=gitlab
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_pypi_wrong_searchmode() {
+        let template = detect_template(
+            Some("https://pypi.debian.net/bitbox02/"),
+            Some(r"https://pypi\.debian\.net/bitbox02/[^/]+\.tar\.gz#/.*-@ANY_VERSION@\.tar\.gz"),
+            Some("html"), // Wrong searchmode
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_pypi_wrong_url() {
+        let template = detect_template(
+            Some("https://pypi.org/bitbox02/"), // Wrong domain
+            Some(r"https://pypi\.debian\.net/bitbox02/[^/]+\.tar\.gz#/.*-@ANY_VERSION@\.tar\.gz"),
+            Some("plain"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_npmregistry_wrong_url() {
+        let template = detect_template(
+            Some("https://npm.example.com/@lemonldapng/handler"), // Wrong domain
+            Some(
+                r"https://registry\.npmjs\.org/lemonldapng/handler/-/.*-@ANY_VERSION@@ARCHIVE_EXT@",
+            ),
+            Some("plain"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_metacpan_wrong_source() {
+        let template = detect_template(
+            Some("https://cpan.example.com/authors/id/"), // Wrong URL
+            Some(r".*/MetaCPAN-Client@ANY_VERSION@@ARCHIVE_EXT@"),
+            Some("plain"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_metacpan_missing_pattern() {
+        let template = detect_template(
+            Some("https://cpan.metacpan.org/authors/id/"),
+            None, // Missing pattern needed to extract dist
+            Some("plain"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_roundtrip_gitlab_template() {
+        let original = Template::GitLab {
+            dist: "https://salsa.debian.org/debian/devscripts".to_string(),
+            release_only: false,
+            version_type: None,
+        };
+        let expanded = expand_template(original.clone());
+
+        let detected = detect_template(
+            expanded.source.as_deref(),
+            expanded.matching_pattern.as_deref(),
+            expanded.searchmode.as_deref(),
+            expanded.mode.as_deref(),
+        );
+
+        assert_eq!(detected, Some(original));
+    }
+
+    #[test]
+    fn test_roundtrip_pypi_template() {
+        let original = Template::PyPI {
+            package: "bitbox02".to_string(),
+            version_type: None,
+        };
+        let expanded = expand_template(original.clone());
+
+        let detected = detect_template(
+            expanded.source.as_deref(),
+            expanded.matching_pattern.as_deref(),
+            expanded.searchmode.as_deref(),
+            expanded.mode.as_deref(),
+        );
+
+        assert_eq!(detected, Some(original));
+    }
+
+    #[test]
+    fn test_roundtrip_npmregistry_template() {
+        let original = Template::Npmregistry {
+            package: "@scope/package".to_string(),
+            version_type: None,
+        };
+        let expanded = expand_template(original.clone());
+
+        let detected = detect_template(
+            expanded.source.as_deref(),
+            expanded.matching_pattern.as_deref(),
+            expanded.searchmode.as_deref(),
+            expanded.mode.as_deref(),
+        );
+
+        assert_eq!(detected, Some(original));
+    }
+
+    #[test]
+    fn test_roundtrip_metacpan_template() {
+        let original = Template::Metacpan {
+            dist: "MetaCPAN-Client".to_string(),
+            version_type: None,
+        };
+        let expanded = expand_template(original.clone());
+
+        let detected = detect_template(
+            expanded.source.as_deref(),
+            expanded.matching_pattern.as_deref(),
+            expanded.searchmode.as_deref(),
+            expanded.mode.as_deref(),
+        );
+
+        assert_eq!(detected, Some(original));
+    }
+
+    #[test]
+    fn test_roundtrip_github_with_version_type() {
+        let original = Template::GitHub {
+            owner: "foo".to_string(),
+            repository: "bar".to_string(),
+            release_only: true,
+            version_type: Some("stable".to_string()),
+        };
+        let expanded = expand_template(original.clone());
+
+        let detected = detect_template(
+            expanded.source.as_deref(),
+            expanded.matching_pattern.as_deref(),
+            expanded.searchmode.as_deref(),
+            expanded.mode.as_deref(),
+        );
+
+        assert_eq!(detected, Some(original));
+    }
+
+    #[test]
+    fn test_detect_with_none_source() {
+        // Should return None if source is None
+        let template = detect_template(
+            None,
+            Some(r".*/v?@ANY_VERSION@@ARCHIVE_EXT@"),
+            Some("html"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_github_partial_match() {
+        // Right URL but wrong pattern
+        let template = detect_template(
+            Some("https://github.com/torvalds/linux/tags"),
+            Some(r".*/v?(\d+\.\d+)\.tar\.gz"), // Not a template pattern
+            Some("html"),
+            None,
+        );
+
+        // Should still detect GitHub but won't have version_type
+        assert_eq!(
+            template,
+            Some(Template::GitHub {
+                owner: "torvalds".to_string(),
+                repository: "linux".to_string(),
+                release_only: false,
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_extract_version_type_edge_cases() {
+        // Multiple @ symbols
+        assert_eq!(extract_version_type("@FOO@@BAR@"), None);
+
+        // Only one @ symbol
+        assert_eq!(extract_version_type("@INCOMPLETE"), None);
+
+        // Not ending with _VERSION
+        assert_eq!(extract_version_type("@SOMETHING@"), None);
+
+        // Empty between @
+        assert_eq!(extract_version_type("@@"), None);
     }
 }

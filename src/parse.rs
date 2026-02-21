@@ -289,12 +289,18 @@ impl ParsedEntry {
         self.get_option("script")
     }
 
-    /// Format the URL with package substitution
+    /// Get the component name (empty for main paragraph)
+    pub fn component(&self) -> Option<String> {
+        self.get_option("component")
+    }
+
+    /// Format the URL with package and component substitution
     pub fn format_url(
         &self,
         package: impl FnOnce() -> String,
+        component: impl FnOnce() -> String,
     ) -> Result<url::Url, url::ParseError> {
-        crate::subst::subst(&self.url(), package).parse()
+        crate::subst::subst(&self.url(), package, component).parse()
     }
 
     /// Get the user agent

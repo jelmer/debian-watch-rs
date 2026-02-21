@@ -1549,8 +1549,12 @@ impl Entry {
     }
 
     /// Replace all substitutions and return the resulting URL.
-    pub fn format_url(&self, package: impl FnOnce() -> String) -> url::Url {
-        crate::subst::subst(self.url().as_str(), package)
+    pub fn format_url(
+        &self,
+        package: impl FnOnce() -> String,
+        component: impl FnOnce() -> String,
+    ) -> url::Url {
+        crate::subst::subst(self.url().as_str(), package, component)
             .parse()
             .unwrap()
     }
@@ -1765,7 +1769,7 @@ impl Entry {
                     self.0.splice_children(opts_idx..opts_idx + 1, vec![]);
 
                     // Remove any leading whitespace/continuation that was after the OPTS_LIST
-                    while self.0.children_with_tokens().next().map_or(false, |e| {
+                    while self.0.children_with_tokens().next().is_some_and(|e| {
                         matches!(
                             e,
                             SyntaxElement::Token(t) if t.kind() == WHITESPACE || t.kind() == CONTINUATION
@@ -1800,7 +1804,7 @@ impl Entry {
                     self.0.splice_children(opts_idx..opts_idx + 1, vec![]);
 
                     // Remove any leading whitespace/continuation that was after the OPTS_LIST
-                    while self.0.children_with_tokens().next().map_or(false, |e| {
+                    while self.0.children_with_tokens().next().is_some_and(|e| {
                         matches!(
                             e,
                             SyntaxElement::Token(t) if t.kind() == WHITESPACE || t.kind() == CONTINUATION
@@ -2259,7 +2263,7 @@ https://github.com/syncthing/syncthing-gtk/tags .*/v?(\d\S+)\.tar\.gz
             "https://github.com/syncthing/syncthing-gtk/tags"
         );
         assert_eq!(
-            entry.format_url(|| "syncthing-gtk".to_string()),
+            entry.format_url(|| "syncthing-gtk".to_string(), || String::new()),
             "https://github.com/syncthing/syncthing-gtk/tags"
                 .parse()
                 .unwrap()
@@ -2282,7 +2286,7 @@ https://github.com/syncthing/@PACKAGE@/tags .*/v?(\d\S+)\.tar\.gz
         let entry = &entries[0];
         assert_eq!(entry.url(), "https://github.com/syncthing/@PACKAGE@/tags");
         assert_eq!(
-            entry.format_url(|| "syncthing-gtk".to_string()),
+            entry.format_url(|| "syncthing-gtk".to_string(), || String::new()),
             "https://github.com/syncthing/syncthing-gtk/tags"
                 .parse()
                 .unwrap()
@@ -2348,7 +2352,7 @@ opts=repack,compression=xz,dversionmangle=s/\+ds//,repacksuffix=+ds \
         assert_eq!(entry.repacksuffix(), Some("+ds".into()));
         assert_eq!(entry.script(), Some("uupdate".into()));
         assert_eq!(
-            entry.format_url(|| "example-cat".to_string()),
+            entry.format_url(|| "example-cat".to_string(), || String::new()),
             "https://github.com/example/example-cat/tags"
                 .parse()
                 .unwrap()
@@ -3540,7 +3544,10 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
         let wf: super::WatchFile = input.parse().unwrap();
         assert_eq!(wf.to_string(), input);
         assert_eq!(wf.entries().count(), 1);
-        assert_eq!(wf.entries().next().unwrap().url(), "https://example.com/foo");
+        assert_eq!(
+            wf.entries().next().unwrap().url(),
+            "https://example.com/foo"
+        );
     }
 
     #[test]

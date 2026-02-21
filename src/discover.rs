@@ -130,7 +130,8 @@ impl ParsedEntry {
         package: impl FnOnce() -> String + Send,
         client: Option<&reqwest::Client>,
     ) -> Result<Vec<Release>, DiscoveryError> {
-        let url = self.format_url(package)?;
+        let component = self.component().unwrap_or_default();
+        let url = self.format_url(package, || component.clone())?;
         let user_agent = self
             .user_agent()
             .unwrap_or_else(|| DEFAULT_USER_AGENT.to_string());
@@ -165,7 +166,12 @@ impl ParsedEntry {
 
         // Apply substitution to the matching pattern
         let package_name = String::new();
-        let pattern = crate::subst::subst(&pattern_str, || package_name.clone());
+        let component_name = String::new();
+        let pattern = crate::subst::subst(
+            &pattern_str,
+            || package_name.clone(),
+            || component_name.clone(),
+        );
 
         // Determine search mode
         let searchmode = self.searchmode();
@@ -258,8 +264,9 @@ impl ParsedEntry {
         package: impl FnOnce() -> String,
         client: Option<&reqwest::blocking::Client>,
     ) -> Result<Vec<Release>, DiscoveryError> {
-        // Get the URL and apply package substitution
-        let url = self.format_url(package)?;
+        // Get the URL and apply package and component substitution
+        let component = self.component().unwrap_or_default();
+        let url = self.format_url(package, || component.clone())?;
 
         // Get user agent
         let user_agent = self
@@ -298,7 +305,12 @@ impl ParsedEntry {
 
         // Apply substitution to the matching pattern
         let package_name = String::new();
-        let pattern = crate::subst::subst(&matching_pattern, || package_name.clone());
+        let component_name = String::new();
+        let pattern = crate::subst::subst(
+            &matching_pattern,
+            || package_name.clone(),
+            || component_name.clone(),
+        );
 
         // Determine search mode
         let searchmode = self.searchmode();

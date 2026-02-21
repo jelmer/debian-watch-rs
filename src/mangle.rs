@@ -240,7 +240,7 @@ pub fn apply_mangle(vm: &str, orig: &str) -> Result<String, MangleError> {
                 Regex::new(&expr.pattern).map_err(|e| MangleError::RegexError(e.to_string()))?;
 
             // Check if 'g' flag is present for global replacement
-            let global = expr.flags.as_ref().map_or(false, |f| f.contains('g'));
+            let global = expr.flags.as_ref().is_some_and(|f| f.contains('g'));
 
             if global {
                 Ok(re.replace_all(orig, expr.replacement.as_str()).to_string())
@@ -253,6 +253,37 @@ pub fn apply_mangle(vm: &str, orig: &str) -> Result<String, MangleError> {
             apply_translation(&expr.pattern, &expr.replacement, orig)
         }
     }
+}
+
+/// Apply a mangling expression with template variable substitution
+///
+/// This first substitutes template variables like @PACKAGE@ and @COMPONENT@ in the
+/// mangle expression itself, then applies the mangle to the input string.
+///
+/// # Examples
+///
+/// ```
+/// use debian_watch::mangle::apply_mangle_with_subst;
+///
+/// let result = apply_mangle_with_subst(
+///     "s/@PACKAGE@/bar/",
+///     "foo baz foo",
+///     || "foo".to_string(),
+///     || String::new()
+/// ).unwrap();
+/// assert_eq!(result, "bar baz foo");
+/// ```
+pub fn apply_mangle_with_subst(
+    vm: &str,
+    orig: &str,
+    package: impl FnOnce() -> String,
+    component: impl FnOnce() -> String,
+) -> Result<String, MangleError> {
+    // Apply template substitution to the mangle expression
+    let substituted_vm = crate::subst::subst(vm, package, component);
+
+    // Apply the mangle expression
+    apply_mangle(&substituted_vm, orig)
 }
 
 /// Apply character-by-character translation
@@ -395,5 +426,59 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result, "syncthing-gtk-0.9.4.tar.gz");
+    }
+
+    #[test]
+    fn test_apply_mangle_with_subst_package() {
+        // Template substitution happens in the mangle expression, so @PACKAGE@
+        // becomes "mypackage" in the pattern, then it matches against the input
+        let result = apply_mangle_with_subst(
+            "s/@PACKAGE@/replaced/",
+            "foo mypackage bar",
+            || "mypackage".to_string(),
+            || String::new(),
+        )
+        .unwrap();
+        assert_eq!(result, "foo replaced bar");
+    }
+
+    #[test]
+    fn test_apply_mangle_with_subst_component() {
+        // Template substitution happens in the mangle expression, so @COMPONENT@
+        // becomes "upstream" in the pattern, then it matches against the input
+        let result = apply_mangle_with_subst(
+            "s/@COMPONENT@/replaced/g",
+            "upstream foo upstream",
+            || unreachable!(),
+            || "upstream".to_string(),
+        )
+        .unwrap();
+        assert_eq!(result, "replaced foo replaced");
+    }
+
+    #[test]
+    fn test_apply_mangle_with_subst_filenamemangle() {
+        // Example: filenamemangle with @PACKAGE@ template
+        let result = apply_mangle_with_subst(
+            r"s/.+\/v?(\d\S+)\.tar\.gz/@PACKAGE@-$1.tar.gz/",
+            "https://github.com/example/repo/archive/v0.9.4.tar.gz",
+            || "myapp".to_string(),
+            || String::new(),
+        )
+        .unwrap();
+        assert_eq!(result, "myapp-0.9.4.tar.gz");
+    }
+
+    #[test]
+    fn test_apply_mangle_with_subst_no_templates() {
+        // Ensure it still works when no templates are present
+        let result = apply_mangle_with_subst(
+            "s/foo/bar/g",
+            "foo baz foo",
+            || unreachable!(),
+            || unreachable!(),
+        )
+        .unwrap();
+        assert_eq!(result, "bar baz bar");
     }
 }

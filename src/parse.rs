@@ -852,3 +852,100 @@ Matching-Pattern: .*\.tar\.xz
         assert_eq!(entries[1].line(), 5); // Sixth line (0-indexed)
     }
 }
+
+/// Thread-safe parse result for watch files, suitable for use in Salsa databases.
+///
+/// This wrapper provides a thread-safe interface around the parsed watch file,
+/// storing either a line-based parse tree or the raw text for deb822 format.
+/// The underlying lossless parse trees (based on rowan's GreenNode) are thread-safe.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Parse {
+    inner: ParseInner,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+enum ParseInner {
+    #[cfg(feature = "linebased")]
+    LineBased(crate::linebased::Parse<crate::linebased::WatchFile>),
+    #[cfg(feature = "deb822")]
+    Deb822(String), // Store raw text for deb822 to avoid SyntaxNode
+}
+
+impl Parse {
+    /// Parse a watch file with automatic format detection
+    pub fn parse(text: &str) -> Self {
+        let version = detect_version(text);
+
+        let inner = match version {
+            #[cfg(feature = "linebased")]
+            Some(WatchFileVersion::LineBased(_)) => {
+                ParseInner::LineBased(crate::linebased::parse_watch_file(text))
+            }
+            #[cfg(feature = "deb822")]
+            Some(WatchFileVersion::Deb822) => {
+                ParseInner::Deb822(text.to_string())
+            }
+            #[cfg(not(feature = "linebased"))]
+            Some(WatchFileVersion::LineBased(_)) => {
+                // Fallback to storing text if linebased feature is not enabled
+                #[cfg(feature = "deb822")]
+                { ParseInner::Deb822(text.to_string()) }
+                #[cfg(not(feature = "deb822"))]
+                { panic!("No watch file parsing features enabled") }
+            }
+            #[cfg(not(feature = "deb822"))]
+            Some(WatchFileVersion::Deb822) => {
+                // Fallback to linebased if deb822 feature is not enabled
+                #[cfg(feature = "linebased")]
+                { ParseInner::LineBased(crate::linebased::parse_watch_file(text)) }
+                #[cfg(not(feature = "linebased"))]
+                { panic!("No watch file parsing features enabled") }
+            }
+            None => {
+                // Default to linebased v1 if we can't detect
+                #[cfg(feature = "linebased")]
+                { ParseInner::LineBased(crate::linebased::parse_watch_file(text)) }
+                #[cfg(not(feature = "linebased"))]
+                #[cfg(feature = "deb822")]
+                { ParseInner::Deb822(text.to_string()) }
+                #[cfg(not(any(feature = "linebased", feature = "deb822")))]
+                { panic!("No watch file parsing features enabled") }
+            }
+        };
+
+        Parse { inner }
+    }
+
+    /// Get the parsed watch file
+    pub fn to_watch_file(&self) -> ParsedWatchFile {
+        match &self.inner {
+            #[cfg(feature = "linebased")]
+            ParseInner::LineBased(parse) => {
+                ParsedWatchFile::LineBased(parse.tree())
+            }
+            #[cfg(feature = "deb822")]
+            ParseInner::Deb822(text) => {
+                let wf: crate::deb822::WatchFile = text.parse().unwrap();
+                ParsedWatchFile::Deb822(wf)
+            }
+        }
+    }
+
+    /// Get the version of the watch file
+    pub fn version(&self) -> u32 {
+        match &self.inner {
+            #[cfg(feature = "linebased")]
+            ParseInner::LineBased(parse) => {
+                parse.tree().version()
+            }
+            #[cfg(feature = "deb822")]
+            ParseInner::Deb822(_) => 5,
+        }
+    }
+}
+
+// Implement Send + Sync since the underlying types are thread-safe
+// LineBased parse uses GreenNode (thread-safe)
+// Deb822 variant stores String (thread-safe)
+unsafe impl Send for Parse {}
+unsafe impl Sync for Parse {}

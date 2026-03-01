@@ -163,6 +163,11 @@ impl Parse<WatchFile> {
     }
 }
 
+// Implement Send + Sync since GreenNode is thread-safe
+// This allows Parse to be stored in Salsa databases
+unsafe impl<T> Send for Parse<T> {}
+unsafe impl<T> Sync for Parse<T> {}
+
 // The internal parse result used during parsing
 struct InternalParse {
     green_node: GreenNode,

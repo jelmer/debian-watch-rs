@@ -21,7 +21,7 @@ rowan = "0.16.1"
 m_lexer = "0.0.4"
 debversion = ">=0.4.7, <0.6"
 url = "2.5.7"
-deb822-lossless = { version = "0.5.7", optional = true }
+deb822-lossless = { version = "0.5.9", optional = true }
 clap = { version = "4.5", features = ["derive"] }
 regex = "1"
 scraper = { version = ">=0.22,<0.26", optional = true }

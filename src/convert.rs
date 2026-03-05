@@ -177,41 +177,55 @@ fn convert_entry_to_v5(entry: &Entry, para: &mut Paragraph) -> Result<(), Conver
 ///
 /// Returns an error for unknown options instead of using heuristics.
 ///
+/// Uscan's v4→v5 converter (Devscripts::Uscan::Version4) applies `ucfirst`
+/// to the option name and capitalizes letters after hyphens. Since most v4
+/// option names have no hyphens, the result is simply the first letter
+/// capitalized. The exceptions are `user-agent` → `User-Agent`, and the
+/// renamed options `date` → `Git-Date` and `pretty` → `Git-Pretty`.
+///
 /// Examples:
-/// - "filenamemangle" -> "Filename-Mangle"
+/// - "filenamemangle" -> "Filenamemangle"
 /// - "mode" -> "Mode"
-/// - "pgpmode" -> "PGP-Mode"
+/// - "pgpmode" -> "Pgpmode"
+/// - "user-agent" -> "User-Agent"
+/// - "date" -> "Git-Date"
+/// - "pretty" -> "Git-Pretty"
 fn option_to_field_name(option: &str) -> Result<String, ConversionError> {
-    // Special cases for known options
+    // Options renamed in v5 (from uscan's %RENAMED hash)
+    match option {
+        "date" => return Ok("Git-Date".to_string()),
+        "pretty" => return Ok("Git-Pretty".to_string()),
+        _ => {}
+    }
+
+    // Known options: apply ucfirst + capitalize after hyphens (matching uscan)
     match option {
         "mode" => Ok("Mode".to_string()),
         "component" => Ok("Component".to_string()),
-        "ctype" => Ok("Component-Type".to_string()),
+        "ctype" => Ok("Ctype".to_string()),
         "compression" => Ok("Compression".to_string()),
         "repack" => Ok("Repack".to_string()),
-        "repacksuffix" => Ok("Repack-Suffix".to_string()),
+        "repacksuffix" => Ok("Repacksuffix".to_string()),
         "bare" => Ok("Bare".to_string()),
         "user-agent" => Ok("User-Agent".to_string()),
         "pasv" | "passive" => Ok("Passive".to_string()),
         "active" | "nopasv" => Ok("Active".to_string()),
-        "unzipopt" => Ok("Unzip-Options".to_string()),
+        "unzipopt" => Ok("Unzipopt".to_string()),
         "decompress" => Ok("Decompress".to_string()),
-        "dversionmangle" => Ok("Debian-Version-Mangle".to_string()),
-        "uversionmangle" => Ok("Upstream-Version-Mangle".to_string()),
-        "downloadurlmangle" => Ok("Download-URL-Mangle".to_string()),
-        "filenamemangle" => Ok("Filename-Mangle".to_string()),
-        "pgpsigurlmangle" => Ok("PGP-Signature-URL-Mangle".to_string()),
-        "oversionmangle" => Ok("Original-Version-Mangle".to_string()),
-        "pagemangle" => Ok("Page-Mangle".to_string()),
-        "dirversionmangle" => Ok("Directory-Version-Mangle".to_string()),
-        "versionmangle" => Ok("Version-Mangle".to_string()),
-        "hrefdecode" => Ok("Href-Decode".to_string()),
-        "pgpmode" => Ok("PGP-Mode".to_string()),
-        "gitmode" => Ok("Git-Mode".to_string()),
-        "gitexport" => Ok("Git-Export".to_string()),
-        "pretty" => Ok("Pretty".to_string()),
-        "date" => Ok("Date".to_string()),
-        "searchmode" => Ok("Search-Mode".to_string()),
+        "dversionmangle" => Ok("Dversionmangle".to_string()),
+        "uversionmangle" => Ok("Uversionmangle".to_string()),
+        "downloadurlmangle" => Ok("Downloadurlmangle".to_string()),
+        "filenamemangle" => Ok("Filenamemangle".to_string()),
+        "pgpsigurlmangle" => Ok("Pgpsigurlmangle".to_string()),
+        "oversionmangle" => Ok("Oversionmangle".to_string()),
+        "pagemangle" => Ok("Pagemangle".to_string()),
+        "dirversionmangle" => Ok("Dirversionmangle".to_string()),
+        "versionmangle" => Ok("Versionmangle".to_string()),
+        "hrefdecode" => Ok("Hrefdecode".to_string()),
+        "pgpmode" => Ok("Pgpmode".to_string()),
+        "gitmode" => Ok("Gitmode".to_string()),
+        "gitexport" => Ok("Gitexport".to_string()),
+        "searchmode" => Ok("Searchmode".to_string()),
         // Return error for unknown options
         _ => Err(ConversionError::UnknownOption(option.to_string())),
     }
@@ -255,7 +269,7 @@ opts=filenamemangle=s/.*\/(.*)/$1/,compression=xz https://example.com/files .*/v
 
         let entry = &entries[0];
         assert_eq!(
-            entry.get_option("Filename-Mangle"),
+            entry.get_option("Filenamemangle"),
             Some("s/.*\\/(.*)/$1/".to_string())
         );
         assert_eq!(entry.get_option("Compression"), Some("xz".to_string()));
@@ -280,7 +294,7 @@ opts=filenamemangle=s/.*\/(.*)/$1/ https://example.com/files .*/v?(\d+)\.tar\.gz
 # This is a comment about the package
 Source: https://example.com/files
 Matching-Pattern: .*/v?(\\d+)\\.tar\\.gz
-Filename-Mangle: s/.*\\/(.*)/$1/
+Filenamemangle: s/.*\\/(.*)/$1/
 ";
         assert_eq!(output, expected);
     }
@@ -306,11 +320,13 @@ https://example.com/repo2 .*/release-(\d+)\.tar\.gz
         assert_eq!(option_to_field_name("mode").unwrap(), "Mode");
         assert_eq!(
             option_to_field_name("filenamemangle").unwrap(),
-            "Filename-Mangle"
+            "Filenamemangle"
         );
-        assert_eq!(option_to_field_name("pgpmode").unwrap(), "PGP-Mode");
+        assert_eq!(option_to_field_name("pgpmode").unwrap(), "Pgpmode");
         assert_eq!(option_to_field_name("user-agent").unwrap(), "User-Agent");
         assert_eq!(option_to_field_name("compression").unwrap(), "Compression");
+        assert_eq!(option_to_field_name("date").unwrap(), "Git-Date");
+        assert_eq!(option_to_field_name("pretty").unwrap(), "Git-Pretty");
     }
 
     #[test]
@@ -389,11 +405,11 @@ opts=uversionmangle=s/-/~/g,dversionmangle=s/\+dfsg// https://example.com/files 
 
         let entry = &entries[0];
         assert_eq!(
-            entry.get_option("Upstream-Version-Mangle"),
+            entry.get_option("Uversionmangle"),
             Some("s/-/~/g".to_string())
         );
         assert_eq!(
-            entry.get_option("Debian-Version-Mangle"),
+            entry.get_option("Dversionmangle"),
             Some("s/\\+dfsg//".to_string())
         );
 
@@ -403,8 +419,8 @@ opts=uversionmangle=s/-/~/g,dversionmangle=s/\+dfsg// https://example.com/files 
 
 Source: https://example.com/files
 Matching-Pattern: .*/(\\d+)\\.tar\\.gz
-Upstream-Version-Mangle: s/-/~/g
-Debian-Version-Mangle: s/\\+dfsg//
+Uversionmangle: s/-/~/g
+Dversionmangle: s/\\+dfsg//
 ";
         assert_eq!(output, expected);
     }
@@ -433,7 +449,7 @@ Debian-Version-Mangle: s/\\+dfsg//
             "https://pypi.debian.net/tomoscan/tomoscan-(.+)\\.(?:zip|tgz|tbz|txz|(?:tar\\.(?:gz|bz2|xz)))"
         );
         assert_eq!(
-            entries[0].get_option("Upstream-Version-Mangle"),
+            entries[0].get_option("Uversionmangle"),
             Some("s/(rc|a|b|c)/~$1/;s/\\.dev/~dev/".to_string())
         );
     }

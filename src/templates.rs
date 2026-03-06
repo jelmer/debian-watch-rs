@@ -456,36 +456,51 @@ fn detect_metacpan_template(
         return None;
     }
 
-    // Check if source matches Metacpan pattern
-    if source != "https://cpan.metacpan.org/authors/id/" {
-        return None;
-    }
+    if source == "https://cpan.metacpan.org/authors/id/" {
+        // Extract dist from matching pattern
+        let pattern = matching_pattern?;
 
-    // Extract dist from matching pattern
-    let pattern = matching_pattern?;
+        // Pattern should be like: .*/DIST-NAME@VERSION@@ARCHIVE_EXT@
+        // We need to extract DIST-NAME
+        if !pattern.starts_with(".*/") {
+            return None;
+        }
 
-    // Pattern should be like: .*/DIST-NAME@VERSION@@ARCHIVE_EXT@
-    // We need to extract DIST-NAME
-    if !pattern.starts_with(".*/") {
-        return None;
-    }
+        let after_prefix = pattern.strip_prefix(".*/").unwrap();
 
-    let after_prefix = pattern.strip_prefix(".*/").unwrap();
+        // Find where the version pattern starts
+        let version_type = extract_version_type(pattern);
 
-    // Find where the version pattern starts
-    let version_type = extract_version_type(pattern);
+        // Extract dist name - everything before the version pattern
+        // Strip optional trailing `-v?` or `-` before the version placeholder
+        let dist = if let Some(idx) = after_prefix.find('@') {
+            after_prefix[..idx].trim_end_matches("-v?").trim_end_matches('-')
+        } else {
+            return None;
+        };
 
-    // Extract dist name - everything before the version pattern
-    let dist = if let Some(idx) = after_prefix.find('@') {
-        &after_prefix[..idx]
+        Some(Template::Metacpan {
+            dist: dist.to_string(),
+            version_type,
+        })
+    } else if let Some(dist) = source
+        .strip_prefix("https://metacpan.org/release/")
+        .or_else(|| source.strip_prefix("https://metacpan.org/dist/"))
+    {
+        let dist = dist.trim_end_matches('/');
+        if dist.is_empty() {
+            return None;
+        }
+
+        let version_type = matching_pattern.and_then(extract_version_type);
+
+        Some(Template::Metacpan {
+            dist: dist.to_string(),
+            version_type,
+        })
     } else {
-        return None;
-    };
-
-    Some(Template::Metacpan {
-        dist: dist.to_string(),
-        version_type,
-    })
+        None
+    }
 }
 
 /// Extract version type from a matching pattern
@@ -941,6 +956,73 @@ mod tests {
             Some("https://cpan.metacpan.org/authors/id/"),
             None, // Missing pattern needed to extract dist
             Some("plain"),
+            None,
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_metacpan_release_url() {
+        let template = detect_template(
+            Some("https://metacpan.org/release/Time-ParseDate"),
+            Some(r".*/Time-ParseDate-v?@ANY_VERSION@@ARCHIVE_EXT@$"),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Metacpan {
+                dist: "Time-ParseDate".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_metacpan_dist_url() {
+        let template = detect_template(
+            Some("https://metacpan.org/dist/Mail-AuthenticationResults"),
+            Some(r".*/Mail-AuthenticationResults-v?@ANY_VERSION@@ARCHIVE_EXT@$"),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Metacpan {
+                dist: "Mail-AuthenticationResults".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_metacpan_cpan_url_with_v_prefix() {
+        // Pattern with `-v?` before version placeholder (common in the wild)
+        let template = detect_template(
+            Some("https://cpan.metacpan.org/authors/id/"),
+            Some(r".*/Time-ParseDate-v?@ANY_VERSION@@ARCHIVE_EXT@"),
+            Some("plain"),
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Metacpan {
+                dist: "Time-ParseDate".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_metacpan_release_url_wrong_domain() {
+        let template = detect_template(
+            Some("https://example.org/release/Time-ParseDate"),
+            Some(r".*/Time-ParseDate-v?@ANY_VERSION@@ARCHIVE_EXT@$"),
+            None,
             None,
         );
 

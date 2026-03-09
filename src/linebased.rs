@@ -97,7 +97,7 @@ impl std::error::Error for ParseError {}
 /// these two SyntaxKind types, allowing for a nicer SyntaxNode API where
 /// "kinds" are values from our `enum SyntaxKind`, instead of plain u16 values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum Lang {}
+pub enum Lang {}
 impl rowan::Language for Lang {
     type Kind = SyntaxKind;
     fn kind_from_raw(raw: rowan::SyntaxKind) -> Self::Kind {
@@ -625,9 +625,8 @@ impl std::fmt::Display for OptionList {
 }
 
 impl WatchFile {
-    /// Access the underlying syntax node (needed for conversion to deb822 format)
-    #[cfg(feature = "deb822")]
-    pub(crate) fn syntax(&self) -> &SyntaxNode {
+    /// Access the underlying syntax node
+    pub fn syntax(&self) -> &SyntaxNode {
         &self.0
     }
 

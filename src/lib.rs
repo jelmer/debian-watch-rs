@@ -66,7 +66,7 @@ pub use types::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[allow(non_camel_case_types, missing_docs, clippy::upper_case_acronyms)]
 #[repr(u16)]
-pub(crate) enum SyntaxKind {
+pub enum SyntaxKind {
     KEY = 0,
     VALUE,
     EQUALS,

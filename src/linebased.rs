@@ -1023,9 +1023,8 @@ impl EntryBuilder {
 }
 
 impl Entry {
-    /// Access the underlying syntax node (needed for conversion to deb822 format)
-    #[cfg(feature = "deb822")]
-    pub(crate) fn syntax(&self) -> &SyntaxNode {
+    /// Access the underlying syntax node.
+    pub fn syntax(&self) -> &SyntaxNode {
         &self.0
     }
 

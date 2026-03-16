@@ -61,6 +61,11 @@ pub struct Entry {
 }
 
 impl WatchFile {
+    /// Returns a reference to the underlying deb822 document.
+    pub fn as_deb822(&self) -> &Deb822 {
+        &self.0
+    }
+
     /// Create a new empty format 5 watch file
     pub fn new() -> Self {
         // Create a minimal format 5 watch file from a string
@@ -622,6 +627,21 @@ fn normalize_key(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_as_deb822() {
+        let input = r#"Version: 5
+
+Source: https://github.com/owner/repo/tags
+Matching-Pattern: .*/v?(\d\S+)\.tar\.gz
+"#;
+
+        let wf: WatchFile = input.parse().unwrap();
+        let deb822 = wf.as_deb822();
+
+        // Should have 2 paragraphs: version header + entry
+        assert_eq!(deb822.paragraphs().count(), 2);
+    }
 
     #[test]
     fn test_create_v5_watchfile() {

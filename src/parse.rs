@@ -889,27 +889,41 @@ impl Parse {
             Some(WatchFileVersion::LineBased(_)) => {
                 // Fallback to storing text if linebased feature is not enabled
                 #[cfg(feature = "deb822")]
-                { ParseInner::Deb822(deb822_lossless::Deb822::parse(text)) }
+                {
+                    ParseInner::Deb822(deb822_lossless::Deb822::parse(text))
+                }
                 #[cfg(not(feature = "deb822"))]
-                { panic!("No watch file parsing features enabled") }
+                {
+                    panic!("No watch file parsing features enabled")
+                }
             }
             #[cfg(not(feature = "deb822"))]
             Some(WatchFileVersion::Deb822) => {
                 // Fallback to linebased if deb822 feature is not enabled
                 #[cfg(feature = "linebased")]
-                { ParseInner::LineBased(crate::linebased::parse_watch_file(text)) }
+                {
+                    ParseInner::LineBased(crate::linebased::parse_watch_file(text))
+                }
                 #[cfg(not(feature = "linebased"))]
-                { panic!("No watch file parsing features enabled") }
+                {
+                    panic!("No watch file parsing features enabled")
+                }
             }
             None => {
                 // Default to linebased v1 if we can't detect
                 #[cfg(feature = "linebased")]
-                { ParseInner::LineBased(crate::linebased::parse_watch_file(text)) }
+                {
+                    ParseInner::LineBased(crate::linebased::parse_watch_file(text))
+                }
                 #[cfg(not(feature = "linebased"))]
                 #[cfg(feature = "deb822")]
-                { ParseInner::Deb822(deb822_lossless::Deb822::parse(text)) }
+                {
+                    ParseInner::Deb822(deb822_lossless::Deb822::parse(text))
+                }
                 #[cfg(not(any(feature = "linebased", feature = "deb822")))]
-                { panic!("No watch file parsing features enabled") }
+                {
+                    panic!("No watch file parsing features enabled")
+                }
             }
         };
 
@@ -920,9 +934,7 @@ impl Parse {
     pub fn to_watch_file(&self) -> ParsedWatchFile {
         match &self.inner {
             #[cfg(feature = "linebased")]
-            ParseInner::LineBased(parse) => {
-                ParsedWatchFile::LineBased(parse.tree())
-            }
+            ParseInner::LineBased(parse) => ParsedWatchFile::LineBased(parse.tree()),
             #[cfg(feature = "deb822")]
             ParseInner::Deb822(parse) => {
                 let deb822 = parse.tree();
@@ -935,9 +947,7 @@ impl Parse {
     pub fn version(&self) -> u32 {
         match &self.inner {
             #[cfg(feature = "linebased")]
-            ParseInner::LineBased(parse) => {
-                parse.tree().version()
-            }
+            ParseInner::LineBased(parse) => parse.tree().version(),
             #[cfg(feature = "deb822")]
             ParseInner::Deb822(_) => 5,
         }

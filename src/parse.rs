@@ -868,7 +868,7 @@ enum ParseInner {
     #[cfg(feature = "linebased")]
     LineBased(crate::linebased::Parse<crate::linebased::WatchFile>),
     #[cfg(feature = "deb822")]
-    Deb822(String), // Store raw text for deb822 to avoid SyntaxNode
+    Deb822(deb822_lossless::Parse<deb822_lossless::Deb822>),
 }
 
 impl Parse {
@@ -883,13 +883,13 @@ impl Parse {
             }
             #[cfg(feature = "deb822")]
             Some(WatchFileVersion::Deb822) => {
-                ParseInner::Deb822(text.to_string())
+                ParseInner::Deb822(deb822_lossless::Deb822::parse(text))
             }
             #[cfg(not(feature = "linebased"))]
             Some(WatchFileVersion::LineBased(_)) => {
                 // Fallback to storing text if linebased feature is not enabled
                 #[cfg(feature = "deb822")]
-                { ParseInner::Deb822(text.to_string()) }
+                { ParseInner::Deb822(deb822_lossless::Deb822::parse(text)) }
                 #[cfg(not(feature = "deb822"))]
                 { panic!("No watch file parsing features enabled") }
             }
@@ -907,7 +907,7 @@ impl Parse {
                 { ParseInner::LineBased(crate::linebased::parse_watch_file(text)) }
                 #[cfg(not(feature = "linebased"))]
                 #[cfg(feature = "deb822")]
-                { ParseInner::Deb822(text.to_string()) }
+                { ParseInner::Deb822(deb822_lossless::Deb822::parse(text)) }
                 #[cfg(not(any(feature = "linebased", feature = "deb822")))]
                 { panic!("No watch file parsing features enabled") }
             }
@@ -924,9 +924,9 @@ impl Parse {
                 ParsedWatchFile::LineBased(parse.tree())
             }
             #[cfg(feature = "deb822")]
-            ParseInner::Deb822(text) => {
-                let wf: crate::deb822::WatchFile = text.parse().unwrap();
-                ParsedWatchFile::Deb822(wf)
+            ParseInner::Deb822(parse) => {
+                let deb822 = parse.tree();
+                ParsedWatchFile::Deb822(crate::deb822::WatchFile::from_deb822(deb822))
             }
         }
     }
@@ -945,7 +945,6 @@ impl Parse {
 }
 
 // Implement Send + Sync since the underlying types are thread-safe
-// LineBased parse uses GreenNode (thread-safe)
-// Deb822 variant stores String (thread-safe)
+// Both variants store GreenNode (thread-safe) via their Parse types
 unsafe impl Send for Parse {}
 unsafe impl Sync for Parse {}

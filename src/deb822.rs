@@ -66,6 +66,15 @@ impl WatchFile {
         &self.0
     }
 
+    /// Construct a WatchFile from an already-parsed Deb822 document.
+    ///
+    /// This avoids re-parsing when the caller already has a parsed tree.
+    /// No version validation is performed — the caller is responsible for
+    /// ensuring the document is a valid version 5 watch file.
+    pub(crate) fn from_deb822(deb822: Deb822) -> Self {
+        WatchFile(deb822)
+    }
+
     /// Create a new empty format 5 watch file
     pub fn new() -> Self {
         // Create a minimal format 5 watch file from a string

@@ -480,7 +480,9 @@ fn detect_metacpan_template(
         // Extract dist name - everything before the version pattern
         // Strip optional trailing `-v?` or `-` before the version placeholder
         let dist = if let Some(idx) = after_prefix.find('@') {
-            after_prefix[..idx].trim_end_matches("-v?").trim_end_matches('-')
+            after_prefix[..idx]
+                .trim_end_matches("-v?")
+                .trim_end_matches('-')
         } else {
             return None;
         };

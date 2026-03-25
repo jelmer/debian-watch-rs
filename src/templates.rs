@@ -397,9 +397,15 @@ fn detect_pypi_template(
         return None;
     }
 
-    let package = source
+    let remainder = source
         .strip_prefix("https://pypi.debian.net/")?
         .trim_end_matches('/');
+
+    // Extract only the package name (first path component)
+    let package = match remainder.split_once('/') {
+        Some((pkg, _)) => pkg,
+        None => remainder,
+    };
 
     // Try to detect version_type from matching pattern
     let version_type = if let Some(pattern) = matching_pattern {
@@ -898,6 +904,26 @@ mod tests {
         );
 
         assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_detect_pypi_source_with_inline_pattern() {
+        // When the Source URL contains the matching pattern inline
+        // (e.g., from old-style watch files), only the package name should be extracted
+        let template = detect_template(
+            Some("https://pypi.debian.net/dulwich/dulwich-(.*).tar.gz"),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::PyPI {
+                package: "dulwich".to_string(),
+                version_type: None,
+            })
+        );
     }
 
     #[test]

@@ -93,6 +93,20 @@ pub enum Template {
         /// Version type pattern to use
         version_type: Option<String>,
     },
+    /// CRAN template
+    Cran {
+        /// Package name
+        package: String,
+        /// Version type pattern to use
+        version_type: Option<String>,
+    },
+    /// Bioconductor template
+    Bioconductor {
+        /// Package name
+        package: String,
+        /// Version type pattern to use
+        version_type: Option<String>,
+    },
 }
 
 /// Expanded template fields
@@ -135,6 +149,14 @@ pub fn expand_template(template: Template) -> ExpandedTemplate {
             version_type,
         } => expand_npmregistry_template(package, version_type),
         Template::Metacpan { dist, version_type } => expand_metacpan_template(dist, version_type),
+        Template::Cran {
+            package,
+            version_type,
+        } => expand_cran_template(package, version_type),
+        Template::Bioconductor {
+            package,
+            version_type,
+        } => expand_bioconductor_template(package, version_type),
     }
 }
 
@@ -247,6 +269,41 @@ fn expand_metacpan_template(dist: String, version_type: Option<String>) -> Expan
     }
 }
 
+/// Expand CRAN template
+fn expand_cran_template(package: String, version_type: Option<String>) -> ExpandedTemplate {
+    let version_pattern = version_type
+        .as_deref()
+        .map(|v| format!("@{}_VERSION@", v.to_uppercase()))
+        .unwrap_or_else(|| "@ANY_VERSION@".to_string());
+
+    ExpandedTemplate {
+        source: Some(format!("https://cran.r-project.org/package={}", package)),
+        matching_pattern: Some(format!(".*_{}.tar.gz", version_pattern)),
+        downloadurlmangle: Some(
+            "s%.*/src/contrib/%https://cran.r-project.org/src/contrib/%".to_string(),
+        ),
+        ..Default::default()
+    }
+}
+
+/// Expand Bioconductor template
+fn expand_bioconductor_template(package: String, version_type: Option<String>) -> ExpandedTemplate {
+    let version_pattern = version_type
+        .as_deref()
+        .map(|v| format!("@{}_VERSION@", v.to_uppercase()))
+        .unwrap_or_else(|| "@ANY_VERSION@".to_string());
+
+    ExpandedTemplate {
+        source: Some(format!("https://bioconductor.org/packages/{}", package)),
+        matching_pattern: Some(format!(".*_{}.tar.gz", version_pattern)),
+        downloadurlmangle: Some(
+            "s%.*/src/contrib/%https://bioconductor.org/packages/release/bioc/src/contrib/%"
+                .to_string(),
+        ),
+        ..Default::default()
+    }
+}
+
 /// Try to detect if the given fields match a known template pattern
 /// and return the corresponding Template if a match is found.
 ///
@@ -294,6 +351,33 @@ pub fn detect_template(
 
     // Try Metacpan template detection
     if let Some(template) = detect_metacpan_template(source, matching_pattern, searchmode) {
+        return Some(template);
+    }
+
+    // Try CRAN template detection
+    if let Some(template) = detect_cran_template(source, matching_pattern) {
+        return Some(template);
+    }
+
+    // Try CRAN detection from old-style source URL (e.g. converted from v4 where
+    // URL and pattern were combined, or from explicit Source/Matching-Pattern)
+    if let Some(template) = detect_cran_from_source_url(source, matching_pattern) {
+        return Some(template);
+    }
+
+    // Try CRAN detection from source URL with embedded pattern (no separate
+    // Matching-Pattern field, common after v4 → v5 conversion)
+    if matching_pattern.is_none() {
+        if let Some(template) = detect_cran_from_inline_url(source) {
+            return Some(template);
+        }
+        if let Some(template) = detect_bioconductor_from_inline_url(source) {
+            return Some(template);
+        }
+    }
+
+    // Try Bioconductor template detection
+    if let Some(template) = detect_bioconductor_template(source, matching_pattern) {
         return Some(template);
     }
 
@@ -509,6 +593,110 @@ fn detect_metacpan_template(
     } else {
         None
     }
+}
+
+/// Detect CRAN template
+fn detect_cran_template(source: &str, matching_pattern: Option<&str>) -> Option<Template> {
+    // Check if source matches CRAN package URL pattern
+    let package = source.strip_prefix("https://cran.r-project.org/package=")?;
+
+    if package.is_empty() {
+        return None;
+    }
+
+    let version_type = matching_pattern.and_then(extract_version_type);
+
+    Some(Template::Cran {
+        package: package.to_string(),
+        version_type,
+    })
+}
+
+/// Detect CRAN template from old-style source URL (pre-template format)
+///
+/// Matches URLs like `https://cran.r-project.org/src/contrib/` or
+/// `https://cloud.r-project.org/src/contrib/` with a matching pattern
+/// that contains the package name.
+pub fn detect_cran_from_source_url(
+    source: &str,
+    matching_pattern: Option<&str>,
+) -> Option<Template> {
+    // Check for CRAN contrib URLs (both cran.r-project.org and cloud.r-project.org)
+    if source != "https://cran.r-project.org/src/contrib/"
+        && source != "https://cloud.r-project.org/src/contrib/"
+    {
+        return None;
+    }
+
+    // Extract package name from matching pattern like "forecast_([-.\d]*)\.tar\.gz"
+    let pattern = matching_pattern?;
+    let package = pattern.split('_').next()?;
+    if package.is_empty() {
+        return None;
+    }
+
+    let version_type = extract_version_type(pattern);
+
+    Some(Template::Cran {
+        package: package.to_string(),
+        version_type,
+    })
+}
+
+/// Detect CRAN template from an inline URL where the source URL contains both
+/// the base URL and the matching pattern (common after v4 → v5 conversion).
+///
+/// Matches URLs like `https://cran.r-project.org/src/contrib/forecast_([-\d.]*)\\.tar\\.gz`
+/// or `https://cloud.r-project.org/src/contrib/forecast_([-\d.]*)\\.tar\\.gz`
+fn detect_cran_from_inline_url(source: &str) -> Option<Template> {
+    let remainder = source
+        .strip_prefix("https://cran.r-project.org/src/contrib/")
+        .or_else(|| source.strip_prefix("https://cloud.r-project.org/src/contrib/"))?;
+
+    // Extract package name: everything before the first underscore
+    let package = remainder.split('_').next()?;
+    if package.is_empty() {
+        return None;
+    }
+
+    Some(Template::Cran {
+        package: package.to_string(),
+        version_type: None,
+    })
+}
+
+/// Detect Bioconductor template from an inline URL where the source URL contains both
+/// the base URL and the matching pattern.
+fn detect_bioconductor_from_inline_url(source: &str) -> Option<Template> {
+    let remainder =
+        source.strip_prefix("https://bioconductor.org/packages/release/bioc/src/contrib/")?;
+
+    let package = remainder.split('_').next()?;
+    if package.is_empty() {
+        return None;
+    }
+
+    Some(Template::Bioconductor {
+        package: package.to_string(),
+        version_type: None,
+    })
+}
+
+/// Detect Bioconductor template
+fn detect_bioconductor_template(source: &str, matching_pattern: Option<&str>) -> Option<Template> {
+    // Check if source matches Bioconductor package URL pattern
+    let package = source.strip_prefix("https://bioconductor.org/packages/")?;
+
+    if package.is_empty() {
+        return None;
+    }
+
+    let version_type = matching_pattern.and_then(extract_version_type);
+
+    Some(Template::Bioconductor {
+        package: package.to_string(),
+        version_type,
+    })
 }
 
 /// Extract version type from a matching pattern
@@ -1198,5 +1386,204 @@ mod tests {
 
         // Empty between @
         assert_eq!(extract_version_type("@@"), None);
+    }
+
+    #[test]
+    fn test_cran_template() {
+        let template = Template::Cran {
+            package: "forecast".to_string(),
+            version_type: None,
+        };
+
+        let result = expand_template(template);
+        assert_eq!(
+            result.source,
+            Some("https://cran.r-project.org/package=forecast".to_string())
+        );
+        assert_eq!(
+            result.matching_pattern,
+            Some(".*_@ANY_VERSION@.tar.gz".to_string())
+        );
+        assert_eq!(
+            result.downloadurlmangle,
+            Some("s%.*/src/contrib/%https://cran.r-project.org/src/contrib/%".to_string())
+        );
+    }
+
+    #[test]
+    fn test_bioconductor_template() {
+        let template = Template::Bioconductor {
+            package: "GenomicRanges".to_string(),
+            version_type: None,
+        };
+
+        let result = expand_template(template);
+        assert_eq!(
+            result.source,
+            Some("https://bioconductor.org/packages/GenomicRanges".to_string())
+        );
+        assert_eq!(
+            result.matching_pattern,
+            Some(".*_@ANY_VERSION@.tar.gz".to_string())
+        );
+        assert_eq!(
+            result.downloadurlmangle,
+            Some(
+                "s%.*/src/contrib/%https://bioconductor.org/packages/release/bioc/src/contrib/%"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn test_detect_cran_template() {
+        let template = detect_template(
+            Some("https://cran.r-project.org/package=forecast"),
+            Some(".*_@ANY_VERSION@.tar.gz"),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Cran {
+                package: "forecast".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_bioconductor_template() {
+        let template = detect_template(
+            Some("https://bioconductor.org/packages/GenomicRanges"),
+            Some(".*_@ANY_VERSION@.tar.gz"),
+            None,
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Bioconductor {
+                package: "GenomicRanges".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_cran_from_source_url() {
+        let template = detect_cran_from_source_url(
+            "https://cran.r-project.org/src/contrib/",
+            Some(r"forecast_([-.\d]*)\.tar\.gz"),
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Cran {
+                package: "forecast".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_cran_from_cloud_url() {
+        let template = detect_cran_from_source_url(
+            "https://cloud.r-project.org/src/contrib/",
+            Some(r"forecast_([-.\d]*)\.tar\.gz"),
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Cran {
+                package: "forecast".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_cran_from_source_url_no_match() {
+        let template = detect_cran_from_source_url(
+            "https://example.com/src/contrib/",
+            Some(r"forecast_([-.\d]*)\.tar\.gz"),
+        );
+
+        assert_eq!(template, None);
+    }
+
+    #[test]
+    fn test_roundtrip_cran_template() {
+        let original = Template::Cran {
+            package: "forecast".to_string(),
+            version_type: None,
+        };
+        let expanded = expand_template(original.clone());
+
+        let detected = detect_template(
+            expanded.source.as_deref(),
+            expanded.matching_pattern.as_deref(),
+            expanded.searchmode.as_deref(),
+            expanded.mode.as_deref(),
+        );
+
+        assert_eq!(detected, Some(original));
+    }
+
+    #[test]
+    fn test_roundtrip_bioconductor_template() {
+        let original = Template::Bioconductor {
+            package: "GenomicRanges".to_string(),
+            version_type: None,
+        };
+        let expanded = expand_template(original.clone());
+
+        let detected = detect_template(
+            expanded.source.as_deref(),
+            expanded.matching_pattern.as_deref(),
+            expanded.searchmode.as_deref(),
+            expanded.mode.as_deref(),
+        );
+
+        assert_eq!(detected, Some(original));
+    }
+
+    #[test]
+    fn test_detect_cran_from_inline_url() {
+        // This is the exact case from Debian bug #1133114: a v4 watch file that gets
+        // mechanically converted to v5 puts the entire URL+pattern into Source
+        let template = detect_template(
+            Some("https://cloud.r-project.org/src/contrib/forecast_([-\\d.]*)\\.tar\\.gz"),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Cran {
+                package: "forecast".to_string(),
+                version_type: None,
+            })
+        );
+    }
+
+    #[test]
+    fn test_detect_cran_from_inline_url_cran_domain() {
+        let template = detect_template(
+            Some("https://cran.r-project.org/src/contrib/gower_([-\\d.]*)\\.tar\\.gz"),
+            None,
+            None,
+            None,
+        );
+
+        assert_eq!(
+            template,
+            Some(Template::Cran {
+                package: "gower".to_string(),
+                version_type: None,
+            })
+        );
     }
 }

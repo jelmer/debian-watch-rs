@@ -504,6 +504,32 @@ impl Entry {
 
                 Template::Metacpan { dist, version_type }
             }
+            "cran" => {
+                let package =
+                    self.get_field("Package")
+                        .ok_or_else(|| TemplateError::MissingField {
+                            template: "CRAN".to_string(),
+                            field: "Package".to_string(),
+                        })?;
+
+                Template::Cran {
+                    package,
+                    version_type,
+                }
+            }
+            "bioconductor" => {
+                let package =
+                    self.get_field("Package")
+                        .ok_or_else(|| TemplateError::MissingField {
+                            template: "Bioconductor".to_string(),
+                            field: "Package".to_string(),
+                        })?;
+
+                Template::Bioconductor {
+                    package,
+                    version_type,
+                }
+            }
             _ => return Err(TemplateError::UnknownTemplate(template_str)),
         };
 
@@ -616,6 +642,26 @@ impl Entry {
             crate::templates::Template::Metacpan { dist, version_type } => {
                 self.paragraph.set("Template", "Metacpan");
                 self.paragraph.set("Dist", dist);
+                if let Some(vt) = version_type {
+                    self.paragraph.set("Version-Type", vt);
+                }
+            }
+            crate::templates::Template::Cran {
+                package,
+                version_type,
+            } => {
+                self.paragraph.set("Template", "CRAN");
+                self.paragraph.set("Package", &package);
+                if let Some(vt) = version_type {
+                    self.paragraph.set("Version-Type", vt);
+                }
+            }
+            crate::templates::Template::Bioconductor {
+                package,
+                version_type,
+            } => {
+                self.paragraph.set("Template", "Bioconductor");
+                self.paragraph.set("Package", &package);
                 if let Some(vt) = version_type {
                     self.paragraph.set("Version-Type", vt);
                 }

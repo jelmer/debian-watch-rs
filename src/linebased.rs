@@ -322,14 +322,22 @@ fn parse(text: &str) -> InternalParse {
             true
         }
 
-        fn parse_option(&mut self) -> bool {
+        /// Parse a single option `key[=value]` inside an `opts=...` list.
+        ///
+        /// `quoted` controls the trailing-token rules: in unquoted mode the
+        /// value stops at the first whitespace, while inside quotes a single
+        /// space before the `,` separator is tolerated.
+        fn parse_option(&mut self, quoted: bool) -> bool {
             if self.current().is_none() {
                 return false;
             }
             while self.current() == Some(CONTINUATION) {
                 self.bump();
             }
-            if self.current() == Some(WHITESPACE) {
+            if !quoted && self.current() == Some(WHITESPACE) {
+                return false;
+            }
+            if quoted && self.current() == Some(QUOTE) {
                 return false;
             }
             self.builder.start_node(OPTION.into());
@@ -355,6 +363,13 @@ fn parse(text: &str) -> InternalParse {
                             consumed_value = true;
                         }
                         Some(EQUALS) if consumed_value => self.bump(),
+                        Some(WHITESPACE) if quoted => {
+                            // Inside quotes, a space between value and the
+                            // next separator (e.g. `"key=v , key2=v"`) is
+                            // tolerated; the surrounding loop handles the
+                            // following comma or closing quote.
+                            break;
+                        }
                         _ => break,
                     }
                 }
@@ -406,14 +421,24 @@ fn parse(text: &str) -> InternalParse {
                 };
                 loop {
                     if quoted {
+                        // Inside quotes, line continuations and surrounding
+                        // whitespace around commas are common; consume them
+                        // before checking for the closing quote so a trailing
+                        // `,\` followed by `"` doesn't get parsed as another
+                        // (empty) option.
+                        self.skip_ws();
                         if self.current() == Some(QUOTE) {
                             self.bump();
                             break;
                         }
-                        self.skip_ws();
                     }
-                    if !self.parse_option() {
+                    if !self.parse_option(quoted) {
                         break;
+                    }
+                    if quoted {
+                        // Allow whitespace/continuation between value and the
+                        // next comma in quoted opts, e.g. `"a=1 , b=2"`.
+                        self.skip_ws();
                     }
                     if self.current() == Some(COMMA) {
                         self.builder.start_node(OPTION_SEPARATOR.into());
@@ -3627,6 +3652,52 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
         let wf: super::WatchFile = input.parse().unwrap();
         let entry = wf.entries().next().unwrap();
         assert_eq!(entry.url(), "https://example.com/x?y=1&z=2");
+    }
+
+    #[test]
+    fn test_parse_quoted_opts_with_trailing_comma_continuation() {
+        // Regression (golang-github-varlink-go style): each option line ends
+        // with `,\` and the closing quote sits on its own line. The parser
+        // must skip the whitespace/continuation before checking for the
+        // closing quote so the trailing comma doesn't kick off another
+        // (empty) option.
+        let input = concat!(
+            "version=4\n\n",
+            "opts=\"\\\n",
+            "pgpmode=none,\\\n",
+            "repack,compression=xz,repacksuffix=+dfsg,\\\n",
+            "dversionmangle=s{[+~]dfsg\\d*}{},\\\n",
+            "\" https://github.com/varlink/go/releases \\\n",
+            "  .*/archive/v?(\\d[\\d\\.]+)\\.tar\\.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url(), "https://github.com/varlink/go/releases");
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some(".*/archive/v?(\\d[\\d\\.]+)\\.tar\\.gz"),
+        );
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_parse_quoted_opts_with_spaces_around_comma() {
+        // Regression (libiio style): `opts="a=1 , b=2"` with whitespace
+        // around the comma inside quotes.
+        let input = concat!(
+            "version=4\n",
+            "opts=\"filenamemangle=s/.+\\/v?(\\d\\S*)\\.tar\\.gz/v$1.tar.gz/ , uversionmangle=tr%-rc%~rc%\" \\\n",
+            "  https://github.com/analogdevicesinc/libiio/tags .*/v(\\d\\S*)\\.tar\\.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url(),
+            "https://github.com/analogdevicesinc/libiio/tags",
+        );
+        assert_eq!(wf.to_string(), input);
     }
 
     #[test]

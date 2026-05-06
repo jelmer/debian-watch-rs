@@ -340,6 +340,13 @@ fn parse(text: &str) -> InternalParse {
             if quoted && self.current() == Some(QUOTE) {
                 return false;
             }
+            // In unquoted mode, anything that doesn't start a `key[=value]`
+            // belongs to the next field (URL etc.) — don't consume it as a
+            // bogus option. This keeps trailing-comma + line-continuation
+            // patterns like `opts=k=v,\\\nhttps://...` parseable.
+            if !quoted && self.current() != Some(KEY) {
+                return false;
+            }
             self.builder.start_node(OPTION.into());
             if self.current() != Some(KEY) {
                 self.builder.start_node(ERROR.into());
@@ -3696,6 +3703,27 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
         assert_eq!(
             entries[0].url(),
             "https://github.com/analogdevicesinc/libiio/tags",
+        );
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_parse_unquoted_opts_trailing_comma_then_url() {
+        // Regression (rally-openstack style): opts ends with `,\` and the URL
+        // begins on the next physical line. The trailing comma should not
+        // make the parser eat the URL as a malformed option.
+        let input = concat!(
+            "version=3\n",
+            "opts=uversionmangle=s/(rc|a|b|c)/~$1/,\\\n",
+            "https://github.com/openstack/rally/tags .*/(\\d\\S*)\\.tar\\.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url(), "https://github.com/openstack/rally/tags");
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some(".*/(\\d\\S*)\\.tar\\.gz"),
         );
         assert_eq!(wf.to_string(), input);
     }

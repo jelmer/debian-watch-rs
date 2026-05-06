@@ -174,6 +174,15 @@ struct InternalParse {
     errors: Vec<String>,
 }
 
+/// Returns true if a token kind can be part of a whitespace-delimited entry
+/// field (URL, matching pattern, version policy, or script).
+///
+/// Values may contain `=` (e.g. URLs with query strings like `?per_page=100`)
+/// or `,` and quotes (regex patterns), so we accept any non-structural token.
+fn is_field_token(kind: Option<SyntaxKind>) -> bool {
+    matches!(kind, Some(KEY | VALUE | EQUALS | COMMA | QUOTE))
+}
+
 fn parse(text: &str) -> InternalParse {
     struct Parser {
         /// input tokens, including whitespace,
@@ -264,7 +273,9 @@ fn parse(text: &str) -> InternalParse {
                     self.skip_ws();
                     continue;
                 }
-                if self.current() != Some(VALUE) && self.current() != Some(KEY) {
+                // A field has to start with a KEY or VALUE token; punctuation
+                // like `=` or `,` on its own is not a valid URL/pattern.
+                if !matches!(self.current(), Some(KEY | VALUE)) {
                     self.builder.start_node(ERROR.into());
                     self.errors.push(format!(
                         "expected value, got {:?} (i={})",
@@ -276,36 +287,22 @@ fn parse(text: &str) -> InternalParse {
                     }
                     self.builder.finish_node();
                 } else {
-                    // Wrap each field in its appropriate node
-                    match i {
-                        0 => {
-                            // URL
-                            self.builder.start_node(URL.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        1 => {
-                            // Matching pattern
-                            self.builder.start_node(MATCHING_PATTERN.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        2 => {
-                            // Version policy
-                            self.builder.start_node(VERSION_POLICY.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        3 => {
-                            // Script
-                            self.builder.start_node(SCRIPT.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        _ => {
-                            self.bump();
-                        }
+                    // Wrap each field in its appropriate node.
+                    // Each field gobbles all consecutive non-whitespace tokens, so
+                    // values like URLs containing '=' (e.g. "?per_page=100") or regex
+                    // patterns containing '=' or ',' are kept intact.
+                    let kind = match i {
+                        0 => URL,
+                        1 => MATCHING_PATTERN,
+                        2 => VERSION_POLICY,
+                        3 => SCRIPT,
+                        _ => unreachable!(),
+                    };
+                    self.builder.start_node(kind.into());
+                    while is_field_token(self.current()) {
+                        self.bump();
                     }
+                    self.builder.finish_node();
                 }
                 self.skip_ws();
             }
@@ -325,14 +322,29 @@ fn parse(text: &str) -> InternalParse {
             true
         }
 
-        fn parse_option(&mut self) -> bool {
+        /// Parse a single option `key[=value]` inside an `opts=...` list.
+        ///
+        /// `quoted` controls the trailing-token rules: in unquoted mode the
+        /// value stops at the first whitespace, while inside quotes a single
+        /// space before the `,` separator is tolerated.
+        fn parse_option(&mut self, quoted: bool) -> bool {
             if self.current().is_none() {
                 return false;
             }
             while self.current() == Some(CONTINUATION) {
                 self.bump();
             }
-            if self.current() == Some(WHITESPACE) {
+            if !quoted && self.current() == Some(WHITESPACE) {
+                return false;
+            }
+            if quoted && self.current() == Some(QUOTE) {
+                return false;
+            }
+            // In unquoted mode, anything that doesn't start a `key[=value]`
+            // belongs to the next field (URL etc.) — don't consume it as a
+            // bogus option. This keeps trailing-comma + line-continuation
+            // patterns like `opts=k=v,\\\nhttps://...` parseable.
+            if !quoted && self.current() != Some(KEY) {
                 return false;
             }
             self.builder.start_node(OPTION.into());
@@ -346,14 +358,36 @@ fn parse(text: &str) -> InternalParse {
             }
             if self.current() == Some(EQUALS) {
                 self.bump();
-                if self.current() != Some(VALUE) && self.current() != Some(KEY) {
+                // The option value may itself be made up of several lexer
+                // tokens — for example `s/.*ref=//` lexes as VALUE EQUALS VALUE
+                // because `=` is an opts separator. Gobble until the next
+                // option boundary so the value is preserved verbatim.
+                let mut consumed_value = false;
+                loop {
+                    match self.current() {
+                        Some(KEY) | Some(VALUE) => {
+                            self.bump();
+                            consumed_value = true;
+                        }
+                        Some(EQUALS) if consumed_value => self.bump(),
+                        Some(WHITESPACE) if quoted => {
+                            // Inside quotes, a space between value and the
+                            // next separator (e.g. `"key=v , key2=v"`) is
+                            // tolerated; the surrounding loop handles the
+                            // following comma or closing quote.
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+                if !consumed_value {
                     self.builder.start_node(ERROR.into());
                     self.errors
                         .push(format!("expected value, got {:?}", self.current()));
-                    self.bump();
+                    if self.current().is_some() {
+                        self.bump();
+                    }
                     self.builder.finish_node();
-                } else {
-                    self.bump();
                 }
             } else if self.current() == Some(COMMA) {
             } else {
@@ -394,14 +428,24 @@ fn parse(text: &str) -> InternalParse {
                 };
                 loop {
                     if quoted {
+                        // Inside quotes, line continuations and surrounding
+                        // whitespace around commas are common; consume them
+                        // before checking for the closing quote so a trailing
+                        // `,\` followed by `"` doesn't get parsed as another
+                        // (empty) option.
+                        self.skip_ws();
                         if self.current() == Some(QUOTE) {
                             self.bump();
                             break;
                         }
-                        self.skip_ws();
                     }
-                    if !self.parse_option() {
+                    if !self.parse_option(quoted) {
                         break;
+                    }
+                    if quoted {
+                        // Allow whitespace/continuation between value and the
+                        // next comma in quoted opts, e.g. `"a=1 , b=2"`.
+                        self.skip_ws();
                     }
                     if self.current() == Some(COMMA) {
                         self.builder.start_node(OPTION_SEPARATOR.into());
@@ -1496,10 +1540,10 @@ impl Entry {
 
     /// Returns the URL of the entry.
     pub fn url(&self) -> String {
-        self.url_node().map(|it| it.url()).unwrap_or_else(|| {
-            // Fallback for entries without URL node (shouldn't happen with new parser)
-            self.items().next().unwrap()
-        })
+        self.url_node()
+            .map(|it| it.url())
+            .or_else(|| self.items().next())
+            .unwrap_or_default()
     }
 
     /// Returns the matching pattern AST node of the entry.
@@ -1990,81 +2034,55 @@ impl _Option {
     }
 }
 
+/// Concatenate every direct token child of `node` whose kind passes `keep`,
+/// preserving the original input order. Used by entry-field accessors so that
+/// values made up of several lexer tokens (e.g. a URL split around `=`) are
+/// returned as a single string.
+fn join_tokens(node: &SyntaxNode, keep: impl Fn(SyntaxKind) -> bool) -> String {
+    let mut out = String::new();
+    for it in node.children_with_tokens() {
+        if let SyntaxElement::Token(token) = it {
+            if keep(token.kind()) {
+                out.push_str(token.text());
+            }
+        }
+    }
+    out
+}
+
 impl Url {
     /// Returns the URL string.
     pub fn url(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    if token.kind() == VALUE {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
 impl MatchingPattern {
     /// Returns the matching pattern string.
     pub fn pattern(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    if token.kind() == VALUE {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
 impl VersionPolicyNode {
     /// Returns the version policy string.
     pub fn policy(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    // Can be KEY (e.g., "debian") or VALUE
-                    if token.kind() == VALUE || token.kind() == KEY {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
 impl ScriptNode {
     /// Returns the script string.
     pub fn script(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    // Can be KEY (e.g., "uupdate") or VALUE
-                    if token.kind() == VALUE || token.kind() == KEY {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
@@ -3608,5 +3626,140 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
                 input
             );
         }
+    }
+
+    #[test]
+    fn test_parse_url_with_equals_in_query_string() {
+        // Regression: URLs with query strings like `?per_page=100` were lexed
+        // as VALUE EQUALS VALUE and tripped up the entry-field parser.
+        let input = concat!(
+            "version=4\n",
+            "https://api.github.com/repos/x/releases?per_page=100 \\\n",
+            "  https://github.com/x/v[^/]+/x.tar.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url(),
+            "https://api.github.com/repos/x/releases?per_page=100"
+        );
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some("https://github.com/x/v[^/]+/x.tar.gz"),
+        );
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_entry_url_does_not_panic_when_empty() {
+        // Pathological entries that come out of the parser without a URL
+        // node must not panic on `Entry::url()` — return an empty string.
+        let input = "version=4\n=garbage\n";
+        let wf = super::WatchFile::from_str_relaxed(input);
+        for entry in wf.entries() {
+            let _ = entry.url();
+        }
+    }
+
+    #[test]
+    fn test_parse_url_node_with_equals_join_tokens() {
+        // Even if the lexer split the URL across tokens, the URL accessor
+        // should reassemble them.
+        let input = "version=4\nhttps://example.com/x?y=1&z=2 .*tar.gz\n";
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entry = wf.entries().next().unwrap();
+        assert_eq!(entry.url(), "https://example.com/x?y=1&z=2");
+    }
+
+    #[test]
+    fn test_parse_quoted_opts_with_trailing_comma_continuation() {
+        // Regression (golang-github-varlink-go style): each option line ends
+        // with `,\` and the closing quote sits on its own line. The parser
+        // must skip the whitespace/continuation before checking for the
+        // closing quote so the trailing comma doesn't kick off another
+        // (empty) option.
+        let input = concat!(
+            "version=4\n\n",
+            "opts=\"\\\n",
+            "pgpmode=none,\\\n",
+            "repack,compression=xz,repacksuffix=+dfsg,\\\n",
+            "dversionmangle=s{[+~]dfsg\\d*}{},\\\n",
+            "\" https://github.com/varlink/go/releases \\\n",
+            "  .*/archive/v?(\\d[\\d\\.]+)\\.tar\\.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url(), "https://github.com/varlink/go/releases");
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some(".*/archive/v?(\\d[\\d\\.]+)\\.tar\\.gz"),
+        );
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_parse_quoted_opts_with_spaces_around_comma() {
+        // Regression (libiio style): `opts="a=1 , b=2"` with whitespace
+        // around the comma inside quotes.
+        let input = concat!(
+            "version=4\n",
+            "opts=\"filenamemangle=s/.+\\/v?(\\d\\S*)\\.tar\\.gz/v$1.tar.gz/ , uversionmangle=tr%-rc%~rc%\" \\\n",
+            "  https://github.com/analogdevicesinc/libiio/tags .*/v(\\d\\S*)\\.tar\\.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url(),
+            "https://github.com/analogdevicesinc/libiio/tags",
+        );
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_parse_unquoted_opts_trailing_comma_then_url() {
+        // Regression (rally-openstack style): opts ends with `,\` and the URL
+        // begins on the next physical line. The trailing comma should not
+        // make the parser eat the URL as a malformed option.
+        let input = concat!(
+            "version=3\n",
+            "opts=uversionmangle=s/(rc|a|b|c)/~$1/,\\\n",
+            "https://github.com/openstack/rally/tags .*/(\\d\\S*)\\.tar\\.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].url(), "https://github.com/openstack/rally/tags");
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some(".*/(\\d\\S*)\\.tar\\.gz"),
+        );
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_parse_unquoted_opts_value_with_equals() {
+        // Regression: `s/.*ref=//` in an option value contains `=` which the
+        // lexer treats as a separator. The option-value loop must keep
+        // gobbling until it hits a real option boundary.
+        let input = concat!(
+            "version=4\n",
+            "opts=dversionmangle=s/\\~dfsg//,downloadurlmangle=s/.*ref=//,pgpsigurlmangle=s/$/.asc/ \\\n",
+            "\thttps://downloads.asterisk.org/pub/telephony/libpri/releases/ libpri-([0-9.]*)\\.tar\\.gz debian uupdate\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url(),
+            "https://downloads.asterisk.org/pub/telephony/libpri/releases/"
+        );
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some("libpri-([0-9.]*)\\.tar\\.gz"),
+        );
+        assert_eq!(wf.to_string(), input);
     }
 }

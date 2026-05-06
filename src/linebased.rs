@@ -174,6 +174,15 @@ struct InternalParse {
     errors: Vec<String>,
 }
 
+/// Returns true if a token kind can be part of a whitespace-delimited entry
+/// field (URL, matching pattern, version policy, or script).
+///
+/// Values may contain `=` (e.g. URLs with query strings like `?per_page=100`)
+/// or `,` and quotes (regex patterns), so we accept any non-structural token.
+fn is_field_token(kind: Option<SyntaxKind>) -> bool {
+    matches!(kind, Some(KEY | VALUE | EQUALS | COMMA | QUOTE))
+}
+
 fn parse(text: &str) -> InternalParse {
     struct Parser {
         /// input tokens, including whitespace,
@@ -264,7 +273,9 @@ fn parse(text: &str) -> InternalParse {
                     self.skip_ws();
                     continue;
                 }
-                if self.current() != Some(VALUE) && self.current() != Some(KEY) {
+                // A field has to start with a KEY or VALUE token; punctuation
+                // like `=` or `,` on its own is not a valid URL/pattern.
+                if !matches!(self.current(), Some(KEY | VALUE)) {
                     self.builder.start_node(ERROR.into());
                     self.errors.push(format!(
                         "expected value, got {:?} (i={})",
@@ -276,36 +287,22 @@ fn parse(text: &str) -> InternalParse {
                     }
                     self.builder.finish_node();
                 } else {
-                    // Wrap each field in its appropriate node
-                    match i {
-                        0 => {
-                            // URL
-                            self.builder.start_node(URL.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        1 => {
-                            // Matching pattern
-                            self.builder.start_node(MATCHING_PATTERN.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        2 => {
-                            // Version policy
-                            self.builder.start_node(VERSION_POLICY.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        3 => {
-                            // Script
-                            self.builder.start_node(SCRIPT.into());
-                            self.bump();
-                            self.builder.finish_node();
-                        }
-                        _ => {
-                            self.bump();
-                        }
+                    // Wrap each field in its appropriate node.
+                    // Each field gobbles all consecutive non-whitespace tokens, so
+                    // values like URLs containing '=' (e.g. "?per_page=100") or regex
+                    // patterns containing '=' or ',' are kept intact.
+                    let kind = match i {
+                        0 => URL,
+                        1 => MATCHING_PATTERN,
+                        2 => VERSION_POLICY,
+                        3 => SCRIPT,
+                        _ => unreachable!(),
+                    };
+                    self.builder.start_node(kind.into());
+                    while is_field_token(self.current()) {
+                        self.bump();
                     }
+                    self.builder.finish_node();
                 }
                 self.skip_ws();
             }
@@ -1990,81 +1987,55 @@ impl _Option {
     }
 }
 
+/// Concatenate every direct token child of `node` whose kind passes `keep`,
+/// preserving the original input order. Used by entry-field accessors so that
+/// values made up of several lexer tokens (e.g. a URL split around `=`) are
+/// returned as a single string.
+fn join_tokens(node: &SyntaxNode, keep: impl Fn(SyntaxKind) -> bool) -> String {
+    let mut out = String::new();
+    for it in node.children_with_tokens() {
+        if let SyntaxElement::Token(token) = it {
+            if keep(token.kind()) {
+                out.push_str(token.text());
+            }
+        }
+    }
+    out
+}
+
 impl Url {
     /// Returns the URL string.
     pub fn url(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    if token.kind() == VALUE {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
 impl MatchingPattern {
     /// Returns the matching pattern string.
     pub fn pattern(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    if token.kind() == VALUE {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
 impl VersionPolicyNode {
     /// Returns the version policy string.
     pub fn policy(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    // Can be KEY (e.g., "debian") or VALUE
-                    if token.kind() == VALUE || token.kind() == KEY {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
 impl ScriptNode {
     /// Returns the script string.
     pub fn script(&self) -> String {
-        self.0
-            .children_with_tokens()
-            .find_map(|it| match it {
-                SyntaxElement::Token(token) => {
-                    // Can be KEY (e.g., "uupdate") or VALUE
-                    if token.kind() == VALUE || token.kind() == KEY {
-                        Some(token.text().to_string())
-                    } else {
-                        None
-                    }
-                }
-                _ => None,
-            })
-            .unwrap()
+        join_tokens(&self.0, |k| {
+            matches!(k, KEY | VALUE | EQUALS | COMMA | QUOTE)
+        })
     }
 }
 
@@ -3608,5 +3579,38 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
                 input
             );
         }
+    }
+
+    #[test]
+    fn test_parse_url_with_equals_in_query_string() {
+        // Regression: URLs with query strings like `?per_page=100` were lexed
+        // as VALUE EQUALS VALUE and tripped up the entry-field parser.
+        let input = concat!(
+            "version=4\n",
+            "https://api.github.com/repos/x/releases?per_page=100 \\\n",
+            "  https://github.com/x/v[^/]+/x.tar.gz\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url(),
+            "https://api.github.com/repos/x/releases?per_page=100"
+        );
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some("https://github.com/x/v[^/]+/x.tar.gz"),
+        );
+        assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_parse_url_node_with_equals_join_tokens() {
+        // Even if the lexer split the URL across tokens, the URL accessor
+        // should reassemble them.
+        let input = "version=4\nhttps://example.com/x?y=1&z=2 .*tar.gz\n";
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entry = wf.entries().next().unwrap();
+        assert_eq!(entry.url(), "https://example.com/x?y=1&z=2");
     }
 }

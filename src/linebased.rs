@@ -1540,10 +1540,10 @@ impl Entry {
 
     /// Returns the URL of the entry.
     pub fn url(&self) -> String {
-        self.url_node().map(|it| it.url()).unwrap_or_else(|| {
-            // Fallback for entries without URL node (shouldn't happen with new parser)
-            self.items().next().unwrap()
-        })
+        self.url_node()
+            .map(|it| it.url())
+            .or_else(|| self.items().next())
+            .unwrap_or_default()
     }
 
     /// Returns the matching pattern AST node of the entry.
@@ -3649,6 +3649,17 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
             Some("https://github.com/x/v[^/]+/x.tar.gz"),
         );
         assert_eq!(wf.to_string(), input);
+    }
+
+    #[test]
+    fn test_entry_url_does_not_panic_when_empty() {
+        // Pathological entries that come out of the parser without a URL
+        // node must not panic on `Entry::url()` — return an empty string.
+        let input = "version=4\n=garbage\n";
+        let wf = super::WatchFile::from_str_relaxed(input);
+        for entry in wf.entries() {
+            let _ = entry.url();
+        }
     }
 
     #[test]

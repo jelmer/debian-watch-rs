@@ -343,14 +343,29 @@ fn parse(text: &str) -> InternalParse {
             }
             if self.current() == Some(EQUALS) {
                 self.bump();
-                if self.current() != Some(VALUE) && self.current() != Some(KEY) {
+                // The option value may itself be made up of several lexer
+                // tokens — for example `s/.*ref=//` lexes as VALUE EQUALS VALUE
+                // because `=` is an opts separator. Gobble until the next
+                // option boundary so the value is preserved verbatim.
+                let mut consumed_value = false;
+                loop {
+                    match self.current() {
+                        Some(KEY) | Some(VALUE) => {
+                            self.bump();
+                            consumed_value = true;
+                        }
+                        Some(EQUALS) if consumed_value => self.bump(),
+                        _ => break,
+                    }
+                }
+                if !consumed_value {
                     self.builder.start_node(ERROR.into());
                     self.errors
                         .push(format!("expected value, got {:?}", self.current()));
-                    self.bump();
+                    if self.current().is_some() {
+                        self.bump();
+                    }
                     self.builder.finish_node();
-                } else {
-                    self.bump();
                 }
             } else if self.current() == Some(COMMA) {
             } else {
@@ -3612,5 +3627,29 @@ opts=compression=xz https://example.com/releases (?:.*?/)?v?(\d
         let wf: super::WatchFile = input.parse().unwrap();
         let entry = wf.entries().next().unwrap();
         assert_eq!(entry.url(), "https://example.com/x?y=1&z=2");
+    }
+
+    #[test]
+    fn test_parse_unquoted_opts_value_with_equals() {
+        // Regression: `s/.*ref=//` in an option value contains `=` which the
+        // lexer treats as a separator. The option-value loop must keep
+        // gobbling until it hits a real option boundary.
+        let input = concat!(
+            "version=4\n",
+            "opts=dversionmangle=s/\\~dfsg//,downloadurlmangle=s/.*ref=//,pgpsigurlmangle=s/$/.asc/ \\\n",
+            "\thttps://downloads.asterisk.org/pub/telephony/libpri/releases/ libpri-([0-9.]*)\\.tar\\.gz debian uupdate\n",
+        );
+        let wf: super::WatchFile = input.parse().unwrap();
+        let entries: Vec<_> = wf.entries().collect();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].url(),
+            "https://downloads.asterisk.org/pub/telephony/libpri/releases/"
+        );
+        assert_eq!(
+            entries[0].matching_pattern().as_deref(),
+            Some("libpri-([0-9.]*)\\.tar\\.gz"),
+        );
+        assert_eq!(wf.to_string(), input);
     }
 }

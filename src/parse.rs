@@ -231,6 +231,26 @@ impl ParsedWatchFile {
             }
         }
     }
+
+    /// Byte range of the version declaration.
+    ///
+    /// In line-based files this is the `version=N` directive on the
+    /// first line; in deb822 files it's the `Version:` entry on the
+    /// header paragraph. Returns `None` when the file has no version
+    /// declaration (legal for v1 line-based files; unusual for v5).
+    pub fn version_range(&self) -> Option<rowan::TextRange> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedWatchFile::LineBased(wf) => wf.version_node().map(|v| v.text_range()),
+            #[cfg(feature = "deb822")]
+            ParsedWatchFile::Deb822(wf) => {
+                // The header paragraph in v5 carries `Version:`; it's
+                // the first paragraph in the deb822 document.
+                let first = wf.as_deb822().paragraphs().next()?;
+                first.get_entry("Version").map(|e| e.text_range())
+            }
+        }
+    }
 }
 
 impl ParsedEntry {
@@ -282,6 +302,105 @@ impl ParsedEntry {
     /// Check if an option/field is set (case-insensitive)
     pub fn has_option(&self, key: &str) -> bool {
         self.get_option(key).is_some()
+    }
+
+    /// Byte range of the source URL within the buffer.
+    ///
+    /// In line-based format this covers the URL token; in deb822 format
+    /// it covers the `Source:` (or `URL:`) entry as a whole — key,
+    /// separator, and value. Returns `None` when the entry has no
+    /// recognisable source.
+    pub fn url_range(&self) -> Option<rowan::TextRange> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.url_node().map(|n| n.text_range()),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => deb822_field_range(e.as_deb822(), &["Source", "URL"]),
+        }
+    }
+
+    /// Byte range of the matching-pattern within the buffer.
+    ///
+    /// Returns `None` when the entry has no matching pattern (either
+    /// not yet set, or the entry is a template).
+    pub fn matching_pattern_range(&self) -> Option<rowan::TextRange> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.matching_pattern_node().map(|n| n.text_range()),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => deb822_field_range(e.as_deb822(), &["Matching-Pattern"]),
+        }
+    }
+
+    /// Byte range of the named option's `key=value` pair (line-based)
+    /// or `Key: value` entry (deb822).
+    ///
+    /// `key` is matched case-insensitively, mirroring `get_option`.
+    /// Returns `None` if the option is unset.
+    pub fn option_range(&self, key: &str) -> Option<rowan::TextRange> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => {
+                let list = e.option_list()?;
+                let opt = list.find_option(key)?;
+                Some(opt.text_range())
+            }
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => {
+                // Try the key as-is, then capitalised — same shape as
+                // `get_option`, since deb822 uses `Component` /
+                // `Mode` / `Pgpsigurlmangle` while line-based uses
+                // lowercase.
+                if let Some(r) = deb822_field_range(e.as_deb822(), &[key]) {
+                    return Some(r);
+                }
+                let mut chars = key.chars();
+                if let Some(first) = chars.next() {
+                    let capitalized = first.to_uppercase().chain(chars).collect::<String>();
+                    deb822_field_range(e.as_deb822(), &[capitalized.as_str()])
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Byte range of the version-policy / `version=...` part of the
+    /// entry, in line-based files. Returns `None` when not set, or when
+    /// this is a deb822 entry (per-file `Version:` lives on the header
+    /// paragraph, not on individual entries — use
+    /// [`ParsedWatchFile::version_range`] for that).
+    pub fn version_policy_range(&self) -> Option<rowan::TextRange> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(e) => e.version_node().map(|n| n.text_range()),
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(_) => None,
+        }
+    }
+
+    /// Byte range of the `Template:` field in this entry, when the
+    /// entry uses one. Templates are a v5 (deb822) feature only;
+    /// line-based entries always return `None`.
+    pub fn template_range(&self) -> Option<rowan::TextRange> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(_) => None,
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => deb822_field_range(e.as_deb822(), &["Template"]),
+        }
+    }
+
+    /// Template kind for this entry (e.g. `"GitHub"`, `"PyPI"`,
+    /// `"CRAN"`), if the entry uses one. Line-based entries always
+    /// return `None`.
+    pub fn template_kind(&self) -> Option<String> {
+        match self {
+            #[cfg(feature = "linebased")]
+            ParsedEntry::LineBased(_) => None,
+            #[cfg(feature = "deb822")]
+            ParsedEntry::Deb822(e) => e.as_deb822().get("Template"),
+        }
     }
 
     /// Get the script
@@ -518,6 +637,23 @@ impl ParsedEntry {
             ParsedEntry::Deb822(e) => e.mode(),
         }
     }
+}
+
+/// Look up the byte range of a deb822 entry by trying each name in
+/// `names` in order. Returns the first match's range. Used by the
+/// watch-file range helpers to handle aliased fields (`Source` vs
+/// `URL`) without spelling out two lookups at every call site.
+#[cfg(feature = "deb822")]
+fn deb822_field_range(
+    paragraph: &deb822_lossless::Paragraph,
+    names: &[&str],
+) -> Option<rowan::TextRange> {
+    for name in names {
+        if let Some(entry) = paragraph.get_entry(name) {
+            return Some(entry.text_range());
+        }
+    }
+    None
 }
 
 impl std::fmt::Display for ParsedWatchFile {
@@ -850,6 +986,133 @@ Matching-Pattern: .*\.tar\.xz
 
         assert_eq!(entries[0].line(), 2); // Third line (0-indexed)
         assert_eq!(entries[1].line(), 5); // Sixth line (0-indexed)
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_url_range_linebased() {
+        let content = "version=4\nhttps://example.com/ .*-([\\d.]+)\\.tar\\.gz\n";
+        let wf = parse(content).unwrap();
+        let entry = wf.entries().next().unwrap();
+        let range = entry.url_range().expect("entry has url");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&content[start..end], "https://example.com/");
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_matching_pattern_range_linebased() {
+        let content = "version=4\nhttps://example.com/ .*-([\\d.]+)\\.tar\\.gz\n";
+        let wf = parse(content).unwrap();
+        let entry = wf.entries().next().unwrap();
+        let range = entry.matching_pattern_range().expect("has pattern");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&content[start..end], ".*-([\\d.]+)\\.tar\\.gz");
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_option_range_linebased() {
+        let content = "version=4\nopts=mode=git,pretty=raw https://example.com/ .*\n";
+        let wf = parse(content).unwrap();
+        let entry = wf.entries().next().unwrap();
+        let mode = entry.option_range("mode").expect("mode option");
+        let start: usize = mode.start().into();
+        let end: usize = mode.end().into();
+        assert_eq!(&content[start..end], "mode=git");
+
+        let pretty = entry.option_range("pretty").expect("pretty option");
+        let start: usize = pretty.start().into();
+        let end: usize = pretty.end().into();
+        assert_eq!(&content[start..end], "pretty=raw");
+
+        assert!(entry.option_range("not-a-real-option").is_none());
+    }
+
+    #[cfg(feature = "linebased")]
+    #[test]
+    fn test_version_range_linebased() {
+        let content = "version=4\nhttps://example.com/ .*\n";
+        let wf = parse(content).unwrap();
+        let range = wf.version_range().expect("has version");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&content[start..end], "version=4\n");
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_url_range_deb822() {
+        let content =
+            "Version: 5\n\nSource: https://example.com/foo\nMatching-Pattern: .*\\.tar\\.gz\n";
+        let wf = parse(content).unwrap();
+        let entry = wf.entries().next().unwrap();
+        let range = entry.url_range().expect("has source");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        // The range covers the whole `Source: ...` entry, ending after
+        // the trailing newline.
+        assert_eq!(&content[start..end], "Source: https://example.com/foo\n");
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_matching_pattern_range_deb822() {
+        let content =
+            "Version: 5\n\nSource: https://example.com/foo\nMatching-Pattern: v(.+)\\.tar\\.gz\n";
+        let wf = parse(content).unwrap();
+        let entry = wf.entries().next().unwrap();
+        let range = entry.matching_pattern_range().expect("has pattern");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(
+            &content[start..end],
+            "Matching-Pattern: v(.+)\\.tar\\.gz\n"
+        );
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_option_range_deb822_lookup_capitalises_key() {
+        // The line-based format uses `mode=git`; deb822 v5 spells the
+        // same option as `Mode: git`. option_range looks up either
+        // case, so callers using the line-based naming convention
+        // still work against v5 files.
+        let content =
+            "Version: 5\n\nSource: https://example.com/foo\nMatching-Pattern: x\nMode: git\n";
+        let wf = parse(content).unwrap();
+        let entry = wf.entries().next().unwrap();
+        let range = entry.option_range("mode").expect("mode field");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&content[start..end], "Mode: git\n");
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_version_range_deb822() {
+        let content =
+            "Version: 5\n\nSource: https://example.com/foo\nMatching-Pattern: x\n";
+        let wf = parse(content).unwrap();
+        let range = wf.version_range().expect("has version");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&content[start..end], "Version: 5\n");
+    }
+
+    #[cfg(feature = "deb822")]
+    #[test]
+    fn test_template_range_deb822() {
+        let content = "Version: 5\n\nSource: https://github.com/foo/bar\nTemplate: GitHub\n";
+        let wf = parse(content).unwrap();
+        let entry = wf.entries().next().unwrap();
+        let range = entry.template_range().expect("has template");
+        let start: usize = range.start().into();
+        let end: usize = range.end().into();
+        assert_eq!(&content[start..end], "Template: GitHub\n");
+        assert_eq!(entry.template_kind(), Some("GitHub".to_string()));
     }
 }
 

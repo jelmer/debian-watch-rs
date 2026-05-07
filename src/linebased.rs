@@ -595,6 +595,16 @@ macro_rules! ast_node {
                 }
             }
 
+            /// Byte range covered by this node in the source buffer.
+            ///
+            /// Useful for editors that need to map a logical concept
+            /// (an option, a URL, a matching pattern) back to the
+            /// exact span it occupies — e.g. to filter LSP diagnostics
+            /// by which part of a watch entry was edited.
+            pub fn text_range(&self) -> rowan::TextRange {
+                self.0.text_range()
+            }
+
             /// Get the line number (0-indexed) where this node starts.
             pub fn line(&self) -> usize {
                 line_col_at_offset(&self.0, self.0.text_range().start()).0
@@ -643,6 +653,11 @@ impl OptionList {
         } else {
             None
         }
+    }
+
+    /// Byte range covered by this option list in the source buffer.
+    pub fn text_range(&self) -> rowan::TextRange {
+        self.0.text_range()
     }
 
     /// Get the line number (0-indexed) where this node starts.
